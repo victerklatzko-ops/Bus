@@ -36,10 +36,10 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font:15px system-ui,s
 .bus.old{background:var(--warn)}
 .dir{position:absolute;inset:-12px;pointer-events:none}
 .arrow{position:absolute;left:50%;top:0;margin-left:-5px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid #fff;filter:drop-shadow(0 0 1px #000)}
-.meWrap{width:44px;height:44px;position:relative}
+.meWrap{width:44px;height:44px;position:relative;pointer-events:none}
 .cone{position:absolute;inset:0;width:44px;height:44px;display:none;overflow:visible}
 .me{position:absolute;left:14px;top:14px;width:16px;height:16px;border-radius:50%;background:#3b9eff;border:3px solid #fff;box-shadow:0 1px 6px #0009}
-.pin{width:18px;height:18px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 6px #0009}
+.pin{pointer-events:none;width:18px;height:18px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 6px #0009}
 .in{width:100%;padding:11px 12px;margin:4px 0;border-radius:10px;border:0;background:#0f1419;color:var(--fg);font-size:16px}
 .go{width:100%;padding:12px;margin-top:6px;border-radius:10px;border:0;background:var(--acc);color:#04210f;font-weight:800;font-size:16px}
 .acts{display:flex;gap:8px;margin:2px 0 8px;flex-wrap:wrap}
@@ -334,7 +334,7 @@ const T = {
     noBusesStart: "Nothing leaves near the start in the next 45 minutes", noRoute: "No route found",
     noRouteSub: "Nothing reachable with at most one transfer in the next couple of hours. Try a closer destination.",
     direct: "direct", transfer: "1 transfer", walkM: "Walk {m} m ({k} min)", walkTo: "Walk {m} m ({k} min) to {n}",
-    tapPin: "Dropped pin", findingAddr: "Finding address…", walkHere: "🚶 Walk here", walkOpt: "Walk", walkSummary: "{k} min · {m} m", approx: "Approximate straight-line route — the walking router is unavailable.",
+    nextLater: "Nothing in the next 2 hours. First buses after that:", hrShort: "h", minShort: "m", tapPin: "Dropped pin", findingAddr: "Finding address…", walkHere: "🚶 Walk here", walkOpt: "Walk", walkSummary: "{k} min · {m} m", approx: "Approximate straight-line route — the walking router is unavailable.",
     transitFail: "Bus/train lookup failed: {e}", wDepart: "Head out on {n}", wDepartNoName: "Start walking", wArrive: "You've arrived",
     wLeft: "Turn left", wRight: "Turn right", wSlightLeft: "Bear left", wSlightRight: "Bear right", wSharpLeft: "Sharp left", wSharpRight: "Sharp right",
     wStraight: "Continue straight", wUturn: "Make a U-turn", wRound: "Take the roundabout", wOnto: "{a} onto {n}", wCont: "Continue on {n}",
@@ -357,7 +357,7 @@ const T = {
     noBusesStart: "שום דבר לא יוצא ליד ההתחלה ב-45 הדקות הקרובות", noRoute: "לא נמצא מסלול",
     noRouteSub: "אין מסלול עם החלפה אחת לכל היותר בשעות הקרובות. נסו יעד קרוב יותר.",
     direct: "ישיר", transfer: "החלפה אחת", walkM: "הליכה {m} מ׳ ({k} דק׳)", walkTo: "הליכה {m} מ׳ ({k} דק׳) אל {n}",
-    tapPin: "סיכה שהוצבה", findingAddr: "מחפש כתובת…", walkHere: "🚶 הליכה לכאן", walkOpt: "הליכה", walkSummary: "{k} דק׳ · {m} מ׳", approx: "מסלול משוער בקו ישר — שירות ההליכה אינו זמין.",
+    nextLater: "אין יציאות בשעתיים הקרובות. היציאות הראשונות אחר כך:", hrShort: "ש׳", minShort: "ד׳", tapPin: "סיכה שהוצבה", findingAddr: "מחפש כתובת…", walkHere: "🚶 הליכה לכאן", walkOpt: "הליכה", walkSummary: "{k} דק׳ · {m} מ׳", approx: "מסלול משוער בקו ישר — שירות ההליכה אינו זמין.",
     transitFail: "חיפוש אוטובוסים/רכבות נכשל: {e}", wDepart: "צאו ל{n}", wDepartNoName: "התחילו ללכת", wArrive: "הגעתם",
     wLeft: "פנו שמאלה", wRight: "פנו ימינה", wSlightLeft: "סטו שמאלה", wSlightRight: "סטו ימינה", wSharpLeft: "פנייה חדה שמאלה", wSharpRight: "פנייה חדה ימינה",
     wStraight: "המשיכו ישר", wUturn: "פנו פניית פרסה", wRound: "היכנסו לכיכר", wOnto: "{a} אל {n}", wCont: "המשיכו ב{n}",
@@ -450,18 +450,22 @@ map.on("load", () => {
   map.addLayer({ id: "walkhl", type: "line", source: "walkhl", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ff8a00", "line-width": 9 } });
   map.addLayer({ id: "walkhl-pt", type: "circle", source: "walkhl", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 9, "circle-color": "#ff8a00", "circle-stroke-color": "#ffffff", "circle-stroke-width": 3 } });
   map.addSource("stops", { type: "geojson", data: EMPTY });
-  map.addLayer({ id: "stops", type: "circle", source: "stops", paint: { "circle-radius": 7, "circle-color": "#ffffff", "circle-stroke-color": "#3b9eff", "circle-stroke-width": 3 } });
-  map.on("click", "stops", e => {
-    const f = e.features?.[0]; if (!f) return;
-    const p = f.properties;
-    showStop({ id: +p.id, code: p.code, name: p.name, lat: +p.lat, lon: +p.lon });
-  });
+  map.addLayer({ id: "stops", type: "circle", source: "stops", paint: { "circle-radius": 9, "circle-color": "#ffffff", "circle-stroke-color": "#3b9eff", "circle-stroke-width": 3 } });
   loadStops(); pollBuses();
 });
+function stopAt(e) {
+  const toStop = (p, d) => ({ d, s: { id: +p.id, code: p.code, name: p.name, lat: +p.lat, lon: +p.lon } });
+  const c = e.lngLat, r = 22; let best = null;
+  const fs = map.getLayer("stops") ? map.queryRenderedFeatures([[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]], { layers: ["stops"] }) : [];
+  for (const f of fs) { const d = Planner.dist({ lat: +f.properties.lat, lon: +f.properties.lon }, { lat: c.lat, lon: c.lng }); if (!best || d < best.d) best = toStop(f.properties, d); }
+  if (!best) for (const st of stopCache.values()) { const d = Planner.dist(st, { lat: c.lat, lon: c.lng }); if (d < 25 && (!best || d < best.d)) best = toStop(st, d); }   // fallback: any known stop within 25 m
+  return best?.s || null;
+}
 map.on("click", e => {
   $("#sugg").style.display = "none"; document.activeElement?.blur?.();
-  if (e.originalEvent?.target?.closest?.(".busMk, .meWrap, .pin")) return;                 // tapped a bus / you / a pin
-  if (map.getLayer("stops") && map.queryRenderedFeatures(e.point, { layers: ["stops"] }).length) return;
+  if (e.originalEvent?.target?.closest?.(".busMk")) return;                                // bus markers handle their own taps
+  const st = stopAt(e);
+  if (st) { showStop(st); return; }
   if ($("#sheet.open [data-detail]")) { closeSheet(); return; }                            // a route is open: first tap just closes its panel
   dropPin(e.lngLat.lat, e.lngLat.lng);
 });
@@ -483,14 +487,17 @@ const stopCache = new Map();
 const addStops = ss => { for (const s of ss) if (s.name && !stopCache.has(s.id)) stopCache.set(s.id, { id: s.id, code: s.code, name: s.name, lat: s.lat, lon: s.lon }); };
 const stopsFC = list => ({ type: "FeatureCollection", features: list.map(s => ({ type: "Feature", geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { id: s.id, code: s.code ?? "", name: s.name ?? "", lat: s.lat, lon: s.lon } })) });
 
+let stopsErr = "";   // shown next to the bus count so a stop-loading failure is never silent
 async function loadStops() {
   if (!map.getSource("stops")) return;
   if (map.getZoom() < 14.5) { setSrc("stops", EMPTY); return; }
-  const b = map.getBounds();
+  const b = map.getBounds(), d = today();
+  const base = { lat__greater_or_equal: b.getSouth(), lat__lower_or_equal: b.getNorth(), lon__greater_or_equal: b.getWest(), lon__lower_or_equal: b.getEast() };
   try {
-    const ss = await api("/gtfs_stops/list", { lat__greater_or_equal: b.getSouth(), lat__lower_or_equal: b.getNorth(), lon__greater_or_equal: b.getWest(), lon__lower_or_equal: b.getEast(), date: today(), limit: 300 });
-    addStops(ss); setSrc("stops", stopsFC(ss));
-  } catch (e) { status(t("stopsFail", { e: e.message })); }
+    // same retry idea as the planner: if the server rejects one form of the request, try smaller / simpler ones
+    const ss = await apiv("loadStops", "/gtfs_stops/list", [{ ...base, date: d, limit: 300 }, { ...base, limit: 300 }, { ...base, date: d, limit: 100 }, { ...base, limit: 100 }]);
+    stopsErr = ""; addStops(ss); setSrc("stops", stopsFC(ss));
+  } catch (e) { stopsErr = t("stopsFail", { e: e.message }); status(stopsErr); }
 }
 const aroundDone = new Set();
 async function ensureStopsAround() {   // fills the cache used by search suggestions; resolves true if new data arrived
@@ -565,7 +572,7 @@ async function pollBuses() {
       m.getPopup().setText(`${t("line", { n: name })} · ${Math.round(l.velocity ?? 0)} km/h · ${Math.round(ageSec(l.recorded_at_time))}s`);
     }
     for (const [k, m] of busMarkers) if (!seen.has(k)) { m.remove(); busMarkers.delete(k); }
-    status(t("buses", { n: latest.size, tm: hhmm(Date.now()) }));
+    status(t("buses", { n: latest.size, tm: hhmm(Date.now()) }) + (stopsErr ? " · " + stopsErr : ""));
   } catch (e) { status(t("liveFail", { e: e.message })); }
   finally { pollBusy = false; }
 }
@@ -825,7 +832,12 @@ async function showStop(s) {
   wireActions(p);
   try {
     const now = Date.now();
-    const rs = await api("/gtfs_ride_stops/list", { gtfs_stop_ids: s.id, arrival_time_from: iso(new Date(now - 60e3)), arrival_time_to: iso(new Date(now + 120 * 60e3)), order_by: "arrival_time asc", limit: 300 });
+    const q = hrs => {
+      const A = { gtfs_stop_ids: s.id, arrival_time_from: iso(new Date(now - 60e3)), arrival_time_to: iso(new Date(now + hrs * 3600e3)) };
+      return apiv("stopDeps", "/gtfs_ride_stops/list", [{ ...A, order_by: "arrival_time asc", limit: 300 }, { ...A, limit: 300 }, { ...A, order_by: "arrival_time asc", limit: 100 }, { ...A, limit: 100 }]);
+    };
+    let rs = await q(2), later = false;
+    if (!rs.length) { rs = await q(14); later = true; }      // nothing soon (e.g. night): show the first buses after that
     if (my !== sheetTok) return;
     if (!rs.length) { $("#sb").innerHTML = `<small>${t("noDep")}</small>`; return; }
     const info = await rideInfo([...new Set(rs.map(r => r.gtfs_ride_id))]);
@@ -836,13 +848,15 @@ async function showStop(s) {
       if (!groups.has(k)) groups.set(k, { i, times: [] });
       groups.get(k).times.push(Date.parse(r.arrival_time || r.departure_time));
     }
+    for (const g of groups.values()) g.times.sort((a, b) => a - b);
     const list = [...groups.values()].sort((a, b) => a.times[0] - b.times[0]);
+    const eta = m => m <= 0 ? t("now") : m < 60 ? m + " " + t("min") : Math.floor(m / 60) + t("hrShort") + " " + (m % 60) + t("minShort");
     const rows = list.map(g => {
       const mins = Math.round((g.times[0] - now) / 60000);
-      return `<div class="row" data-l="${esc(g.i.name)}"><div>${pill(g.i)} <small>${esc(g.i.dest)}</small></div><div class="tm"><b>${mins <= 0 ? t("now") : mins + " " + t("min")}</b><br><small>${g.times.slice(0, 4).map(hhmm).join(" · ")}</small></div></div>`;
+      return `<div class="row" data-l="${esc(g.i.name)}"><div>${pill(g.i)} <small>${esc(g.i.dest)}</small></div><div class="tm"><b>${eta(mins)}</b><br><small>${g.times.slice(0, 4).map(hhmm).join(" · ")}</small></div></div>`;
     }).join("");
     const rail = list.some(g => g.i.mode !== "bus");
-    $("#sb").innerHTML = rows + `<small class="note">${t("sched")}${rail ? " · " + t("noRail") : ""}</small>`;
+    $("#sb").innerHTML = (later ? `<small class="note" style="margin:0 0 6px">${t("nextLater")}</small>` : "") + rows + `<small class="note">${t("sched")}${rail ? " · " + t("noRail") : ""}</small>`;
     $("#sb").querySelectorAll(".row").forEach(el => el.onclick = () => followLineByNumber(el.dataset.l));
   } catch (e) { if (my === sheetTok) $("#sb").innerHTML = `<small>${esc(t("depFail", { e: e.message }))}</small>`; }
 }
