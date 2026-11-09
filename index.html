@@ -390,7 +390,7 @@ function applyLang() {
 // ================= helpers =================
 const status = m => $("#status").textContent = m;
 const dayStr = off => new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - off * 864e5).toISOString().slice(0, 10);
-const BUILD = "v14";
+const BUILD = "v15";
 let SCHEMA = null;
 const schemaReady = (async () => { try { const r = await fetch(API + "/openapi.json", { signal: AbortSignal.timeout(12000) }); SCHEMA = (await r.json()).paths || null; } catch { SCHEMA = null; } })();
 const paramsOf = path => (SCHEMA?.[path]?.get?.parameters || []).map(p => p.name);
@@ -610,7 +610,7 @@ function seedRideInfo(rows) {            // works on /gtfs_ride_stops rows (they
     const id = r.gtfs_ride_id ?? r.id;
     if (id == null || rideInfoCache.has(id)) continue;
     const long = r.gtfs_route__route_long_name || r.route_long_name || "";
-    rideInfoCache.set(id, { name: r.gtfs_route__route_short_name || r.route_short_name || "?", dest: long.split("<->").pop().replace(/#.*$/, "").replace(/-\d+$/, ""), mode: modeOf(r) });
+    rideInfoCache.set(id, { name: r.gtfs_route__route_short_name || r.route_short_name || "?", dest: long.split("<->").pop().replace(/#.*$/, "").replace(/-\d+$/, ""), mode: modeOf(r), ref: r.gtfs_route__line_ref ?? null });
   }
 }
 async function rideInfo(ids) {
@@ -634,19 +634,48 @@ function updateRotations() {
   applyHeading();
 }
 
+async function liveForLines(p, refs) {
+  await schemaReady;
+  const path = "/siri_vehicle_locations/list", names = paramsOf(path), want = new Set(refs.map(String));
+  let rows;
+  if (names.includes("siri_routes__line_refs")) rows = await api(path, { ...p, siri_routes__line_refs: refs.join(",") });
+  else rows = (await Promise.all(refs.slice(0, 20).map(r => api(path, { ...p, siri_routes__line_ref: r }).catch(() => [])))).flat();
+  // never trust the server filter: keep only the wanted lines, newest ping first
+  return rows.filter(l => want.has(String(l.siri_route__line_ref))).sort((a, b) => Date.parse(b.recorded_at_time) - Date.parse(a.recorded_at_time));
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function pollNow() { for (let i = 0; i < 30 && pollBusy; i++) await sleep(100); return pollBuses(); }
+// While a planned trip is open, only the lines used by that trip show on the map.
+function releasePlanFilter() {
+  if (!followLines?.plan) return;
+  followLines = null;
+  for (const m of busMarkers.values()) m.remove(); busMarkers.clear();
+  pollNow(); loadStops();
+}
+async function applyPlanFilter(o, my) {
+  const legs = o.legs.filter(l => l.mode !== "walk");
+  const refs = new Set(), names = [];
+  for (const l of legs) { names.push(l.line); const r = rideInfoCache.get(l.rideId)?.ref; if (r != null) refs.add(r); }
+  for (const l of legs) if (rideInfoCache.get(l.rideId)?.ref == null) {
+    try { for (const r of await apiDate("/gtfs_routes/list", { route_short_name: l.line, limit: 80 })) if (r.line_ref != null) refs.add(r.line_ref); } catch { }
+  }
+  if (my !== sheetTok || !refs.size) return;
+  followLines = { label: [...new Set(names)].join(" · "), lineRefs: [...refs], plan: true };
+  for (const m of busMarkers.values()) m.remove(); busMarkers.clear();
+  pollNow();
+}
 async function pollBuses() {
   if (pollBusy || !map.loaded?.() && !map.getSource("stops")) return;
   pollBusy = true;
   try {
     const now = new Date();
     const p = { recorded_at_time_from: iso(new Date(now - 10 * 60 * 1000)), recorded_at_time_to: iso(now), order_by: "recorded_at_time desc", limit: 1000 };
-    if (followLines) p.siri_routes__line_refs = followLines.lineRefs.join(",");
-    else {
+    if (!followLines) {
       if (map.getZoom() < 14) { for (const m of busMarkers.values()) m.remove(); busMarkers.clear(); status(t("zoomIn")); return; }
       const b = map.getBounds();
       Object.assign(p, { lat__greater_or_equal: b.getSouth(), lat__lower_or_equal: b.getNorth(), lon__greater_or_equal: b.getWest(), lon__lower_or_equal: b.getEast() });
     }
-    const locs = await api("/siri_vehicle_locations/list", p);
+    const locs = followLines ? await liveForLines(p, followLines.lineRefs) : await api("/siri_vehicle_locations/list", p);
     const latest = new Map();
     for (const l of locs) { const k = l.siri_ride__vehicle_ref ?? l.siri_ride_id ?? l.id; if (!latest.has(k)) latest.set(k, l); }
     await resolveNames([...latest.values()]);
@@ -670,7 +699,7 @@ async function pollBuses() {
       m.getPopup().setText(`${t("line", { n: name })} · ${Math.round(l.velocity ?? 0)} km/h · ${Math.round(ageSec(l.recorded_at_time))}s`);
     }
     for (const [k, m] of busMarkers) if (!seen.has(k)) { m.remove(); busMarkers.delete(k); }
-    status(t("buses", { n: latest.size, tm: hhmm(Date.now()) }) + (stopsErr ? " · " + stopsErr : stopsInfo ? " · " + stopsInfo : "") + " · " + BUILD);
+    status(t("buses", { n: latest.size, tm: hhmm(Date.now()) }) + (followLines?.plan ? " · 🚌 " + followLines.label : "") + (stopsErr ? " · " + stopsErr : stopsInfo ? " · " + stopsInfo : "") + " · " + BUILD);
   } catch (e) { status(t("liveFail", { e: e.message })); }
   finally { pollBusy = false; }
 }
@@ -756,7 +785,7 @@ function bindSuggest(input, box, opt) {
 }
 
 let pins = [];
-function clearRoute() { setSrc("route", EMPTY); clearHighlight(); navRoutes = []; pins.forEach(p => p.remove()); pins = []; }
+function clearRoute() { releasePlanFilter(); setSrc("route", EMPTY); clearHighlight(); navRoutes = []; pins.forEach(p => p.remove()); pins = []; }
 function addPin(p, color) {
   const el = document.createElement("div"); el.className = "pin"; el.style.background = color;
   pins.push(new maplibregl.Marker({ element: el }).setLngLat([p.lon, p.lat]).addTo(map));
@@ -1117,7 +1146,8 @@ async function showOption(o, from, to, onBack) {
   setSrc("route", { type: "FeatureCollection", features: feats });
   map.fitBounds(bounds, { padding: { top: 90, bottom: 280, left: 40, right: 40 }, duration: 600 });
   sheet(`<i data-detail></i><h3><span>${hhmm(o.depart)} → ${hhmm(o.arrive)}</span><span class="hdrb"><button class="cb" id="back">${t("back")}</button>${exitBtnHtml()}</span></h3>` + rows.join(""));
-  $("#back").onclick = onBack; wireExit();
+  $("#back").onclick = () => { releasePlanFilter(); onBack(); }; wireExit();
+  if (o.legs.some(l => l.mode !== "walk")) applyPlanFilter(o, sheetTok);
   wireSteps($("#sheet"));
   $("#sheet").querySelectorAll(".wleg").forEach(h => h.onclick = () => {
     const box = $("#sheet").querySelector(`.wsteps[data-wl="${h.dataset.wl}"]`), open = box.classList.toggle("open");
@@ -1304,7 +1334,7 @@ $("#lang").onclick = () => {
 };
 applyLang();
 startWatch(); setMode(1); startCompass();
-map.on("moveend", debounce(() => { if (!followLines) loadStops(); pollBuses(); }, 500));
+map.on("moveend", debounce(() => { if (!followLines || followLines.plan) loadStops(); pollBuses(); }, 500));
 setInterval(() => { if (!document.hidden) pollBuses(); }, 10000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) pollBuses(); });
 </script>
