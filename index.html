@@ -56,6 +56,7 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font:15px system-ui,s
 .wleg{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid #ffffff14;font-size:14px;cursor:pointer}
 .wsteps{display:none;margin:0 0 6px;background:#0f141966;border-radius:10px}
 .wsteps.open{display:block}
+.diag{font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;word-break:break-all;color:#cfd8e3;user-select:text}
 .maplibregl-ctrl-attrib{font-size:10px}
 </style>
 </head>
@@ -379,6 +380,27 @@ function applyLang() {
 
 // ================= helpers =================
 const status = m => $("#status").textContent = m;
+const dayStr = off => new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - off * 864e5).toISOString().slice(0, 10);
+const BUILD = "v10";
+const dateMode = { i: 0, label: "today" };
+const isBad = e => / (400|422)(:|$)/.test(e.message);
+// GTFS lookups are per-date. If the server has nothing for today (e.g. just after midnight), fall back to yesterday, then to any date.
+async function apiDate(path, params) {
+  const forms = [0, 1, "none"], order = [dateMode.i, 0, 1, 2].filter((v, i, a) => a.indexOf(v) === i);
+  let lastErr = null, lastRes = [];
+  for (const i of order) {
+    const f = forms[i], p = { ...params };
+    if (f === "none") delete p.date; else p.date = dayStr(f);
+    try {
+      const r = await api(path, p);
+      if (!Array.isArray(r) || r.length) { dateMode.i = i; dateMode.label = f === 0 ? "today" : f === 1 ? "yesterday" : "any date"; return r; }
+      lastRes = r;
+    } catch (e) { if (!isBad(e)) throw e; lastErr = e; }
+  }
+  if (lastErr && !lastRes.length) throw lastErr;
+  return lastRes;
+}
+const dedupeStops = ss => { const seen = new Set(); return ss.filter(s => { const k = s.code ?? s.id; if (seen.has(k)) return false; seen.add(k); return true; }); };
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const iso = d => d.toISOString().replace(/\.\d+Z$/, "+00:00");
 const hhmm = ms => new Date(ms).toLocaleTimeString(lang === "he" ? "he-IL" : "en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -487,16 +509,16 @@ const stopCache = new Map();
 const addStops = ss => { for (const s of ss) if (s.name && !stopCache.has(s.id)) stopCache.set(s.id, { id: s.id, code: s.code, name: s.name, lat: s.lat, lon: s.lon }); };
 const stopsFC = list => ({ type: "FeatureCollection", features: list.map(s => ({ type: "Feature", geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { id: s.id, code: s.code ?? "", name: s.name ?? "", lat: s.lat, lon: s.lon } })) });
 
-let stopsErr = "";   // shown next to the bus count so a stop-loading failure is never silent
+let stopsErr = "", stopsInfo = "";   // shown next to the bus count so a stop-loading failure is never silent
 async function loadStops() {
   if (!map.getSource("stops")) return;
-  if (map.getZoom() < 14.5) { setSrc("stops", EMPTY); return; }
-  const b = map.getBounds(), d = today();
+  if (map.getZoom() < 14.5) { setSrc("stops", EMPTY); stopsInfo = "zoom in for stops"; return; }
+  const b = map.getBounds();
   const base = { lat__greater_or_equal: b.getSouth(), lat__lower_or_equal: b.getNorth(), lon__greater_or_equal: b.getWest(), lon__lower_or_equal: b.getEast() };
   try {
-    // same retry idea as the planner: if the server rejects one form of the request, try smaller / simpler ones
-    const ss = await apiv("loadStops", "/gtfs_stops/list", [{ ...base, date: d, limit: 300 }, { ...base, limit: 300 }, { ...base, date: d, limit: 100 }, { ...base, limit: 100 }]);
-    stopsErr = ""; addStops(ss); setSrc("stops", stopsFC(ss));
+    const ss = dedupeStops(await apiDate("/gtfs_stops/list", { ...base, limit: 300 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...base, limit: 100 }); }));
+    stopsErr = ""; stopsInfo = `stops ${ss.length}${dateMode.label === "today" ? "" : " (" + dateMode.label + ")"}`;
+    addStops(ss); setSrc("stops", stopsFC(ss));
   } catch (e) { stopsErr = t("stopsFail", { e: e.message }); status(stopsErr); }
 }
 const aroundDone = new Set();
@@ -506,7 +528,8 @@ async function ensureStopsAround() {   // fills the cache used by search suggest
   aroundDone.add(key);
   try {
     const d = 0.08;
-    addStops(await api("/gtfs_stops/list", { lat__greater_or_equal: c.lat - d, lat__lower_or_equal: c.lat + d, lon__greater_or_equal: c.lng - d, lon__lower_or_equal: c.lng + d, date: today(), limit: 4000 }));
+    { const bb = { lat__greater_or_equal: c.lat - d, lat__lower_or_equal: c.lat + d, lon__greater_or_equal: c.lng - d, lon__lower_or_equal: c.lng + d };
+      addStops(dedupeStops(await apiDate("/gtfs_stops/list", { ...bb, limit: 4000 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...bb, limit: 1000 }); }))); }
     return true;
   } catch { aroundDone.delete(key); return false; }
 }
@@ -572,7 +595,7 @@ async function pollBuses() {
       m.getPopup().setText(`${t("line", { n: name })} · ${Math.round(l.velocity ?? 0)} km/h · ${Math.round(ageSec(l.recorded_at_time))}s`);
     }
     for (const [k, m] of busMarkers) if (!seen.has(k)) { m.remove(); busMarkers.delete(k); }
-    status(t("buses", { n: latest.size, tm: hhmm(Date.now()) }) + (stopsErr ? " · " + stopsErr : ""));
+    status(t("buses", { n: latest.size, tm: hhmm(Date.now()) }) + (stopsErr ? " · " + stopsErr : stopsInfo ? " · " + stopsInfo : "") + " · " + BUILD);
   } catch (e) { status(t("liveFail", { e: e.message })); }
   finally { pollBusy = false; }
 }
@@ -580,7 +603,7 @@ async function resolveNames(locs) {
   const missing = [...new Set(locs.map(l => l.siri_route__line_ref).filter(r => r != null && !routeNames.has(r)))];
   if (!missing.length) return;
   try {
-    const rs = await api("/gtfs_routes/list", { line_refs: missing.join(","), date: today(), limit: 200 });
+    const rs = await apiDate("/gtfs_routes/list", { line_refs: missing.join(","), limit: 200 });
     for (const r of rs) routeNames.set(r.line_ref, r.route_short_name);
   } catch { /* cosmetic */ }
   for (const m of missing) if (!routeNames.has(m)) routeNames.set(m, "•");
@@ -589,7 +612,7 @@ async function resolveNames(locs) {
 async function followLineByNumber(num) {
   const my = sheet(`<small>${t("loading")}</small>`);
   try {
-    const rs = await api("/gtfs_routes/list", { route_short_name: num, date: today(), limit: 80 });
+    const rs = await apiDate("/gtfs_routes/list", { route_short_name: num, limit: 80 });
     if (my !== sheetTok) return;
     if (!rs.length) { sheet(`<small>${esc(t("noLine", { n: num }))}</small>`); return; }
     lineNames.add(num);
@@ -866,7 +889,7 @@ const rideStopCache = new Map();
 async function stopsNear(p, r = 1000) {
   const d = r / 111320, d2 = today();
   const base = { lat__greater_or_equal: p.lat - d, lat__lower_or_equal: p.lat + d, lon__greater_or_equal: p.lon - d * 1.2, lon__lower_or_equal: p.lon + d * 1.2 };
-  const ss = await apiv("stopsNear", "/gtfs_stops/list", [{ ...base, date: d2, limit: 300 }, { ...base, limit: 300 }, { ...base, date: d2, limit: 100 }]);
+  const ss = dedupeStops(await apiDate("/gtfs_stops/list", { ...base, limit: 300 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...base, limit: 100 }); }));
   return ss.sort((a, b) => Planner.dist(a, p) - Planner.dist(b, p)).slice(0, 120).map(s => s.id);   // nearest 120 keeps the URL short
 }
 async function ridesAtStops(stopIds, from, to, cap) {
@@ -1073,6 +1096,53 @@ $("#loc").onclick = () => {
 };
 map.on("dragstart", e => { if (e.originalEvent) setMode(0); });
 map.on("rotatestart", e => { if (e.originalEvent && mode === 2) setMode(1); });
+
+// ================= diagnostics: tap the status line =================
+const U = (path, params) => API + path + "?" + new URLSearchParams(params);
+async function probe(label, url) {
+  const t0 = performance.now();
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { }
+    const rows = Array.isArray(j) ? j.length : j?.routes ? j.routes.length : j ? 1 : 0;
+    const first = Array.isArray(j) ? j[0] : j?.routes ? { distance: j.routes[0]?.distance, hasSteps: !!j.routes[0]?.legs?.[0]?.steps?.length, stepGeometry: !!j.routes[0]?.legs?.[0]?.steps?.[0]?.geometry } : j;
+    return { ok: r.ok, label, status: r.status, ms: Math.round(performance.now() - t0), rows, j, sample: r.ok ? JSON.stringify(first ?? null).slice(0, 280) : txt.replace(/\s+/g, " ").slice(0, 220) };
+  } catch (e) { return { ok: false, label, status: "ERR", ms: Math.round(performance.now() - t0), rows: 0, j: null, sample: String(e.message || e) }; }
+}
+async function openDiag() {
+  const b = map.getBounds(), c = map.getCenter(), now = new Date();
+  const view = { lat__greater_or_equal: b.getSouth(), lat__lower_or_equal: b.getNorth(), lon__greater_or_equal: b.getWest(), lon__lower_or_equal: b.getEast() };
+  const from = iso(new Date(now - 5 * 60e3)), to = iso(now);
+  const head = [`BusMap ${BUILD} · ${now.toISOString()}`, `view ${c.lat.toFixed(4)},${c.lng.toFixed(4)} zoom ${map.getZoom().toFixed(1)}`, lastFix ? `you ${lastFix.lat.toFixed(4)},${lastFix.lon.toFixed(4)}` : "no GPS fix yet", `date used: ${dateMode.label} (today ${dayStr(0)})`, `status: ${$("#status").textContent}`];
+  const my = sheet(`<i data-detail></i><h3><span>🩺 Diagnostics</span></h3><small>${t("loading")}</small>`);
+  const [s0, s1, s2, v1, v2, w, a] = await Promise.all([
+    probe("stops · today", U("/gtfs_stops/list", { ...view, date: dayStr(0), limit: 5 })),
+    probe("stops · yesterday", U("/gtfs_stops/list", { ...view, date: dayStr(1), limit: 5 })),
+    probe("stops · no date", U("/gtfs_stops/list", { ...view, limit: 5 })),
+    probe("live buses · this view", U("/siri_vehicle_locations/list", { ...view, recorded_at_time_from: from, recorded_at_time_to: to, limit: 5 })),
+    probe("live buses · anywhere", U("/siri_vehicle_locations/list", { recorded_at_time_from: from, recorded_at_time_to: to, limit: 5 })),
+    probe("walking router", `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${c.lng},${c.lat};${c.lng + 0.002},${c.lat + 0.001}?overview=false&steps=true&geometries=geojson`),
+    probe("address lookup", `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${c.lat}&lon=${c.lng}&zoom=18`)
+  ]);
+  const withRows = [s0, s1, s2].find(x => x.ok && x.rows && x.j?.[0]?.id != null);
+  const tt = [];
+  if (withRows) {
+    const sid = withRows.j[0].id, win = { gtfs_stop_ids: sid, arrival_time_from: iso(new Date(now - 60e3)), arrival_time_to: iso(new Date(now.getTime() + 2 * 3600e3)) };
+    tt.push(...await Promise.all([
+      probe("timetable at stop · limit 5", U("/gtfs_ride_stops/list", { ...win, limit: 5 })),
+      probe("timetable · limit 1500 + sorted", U("/gtfs_ride_stops/list", { ...win, order_by: "arrival_time asc", limit: 1500 }))
+    ]));
+  } else tt.push({ ok: false, label: "timetable at stop", status: "-", ms: 0, rows: 0, sample: "skipped: no stop was returned above" });
+  const all = [s0, s1, s2, v1, v2, ...tt, w, a];
+  const text = head.join("\n") + "\n\n" + all.map(x => `${x.ok ? "OK  " : "FAIL"} ${x.label} — ${x.status} · ${x.ms}ms · ${x.rows} rows\n     ${x.sample}`).join("\n");
+  if (my !== sheetTok) return;
+  sheet(`<i data-detail></i><h3><span>🩺 Diagnostics</span><button class="cb" id="dx">${lang === "he" ? "סגור" : "Close"}</button></h3>
+    <div class="acts"><button class="cb main" id="dcp">${lang === "he" ? "העתק דוח" : "Copy report"}</button></div>
+    <div class="diag">${esc(text)}</div>`);
+  $("#dx").onclick = closeSheet;
+  $("#dcp").onclick = async () => { try { await navigator.clipboard.writeText(text); $("#dcp").textContent = "✓ copied"; } catch { $("#dcp").textContent = "select the text below and copy"; } };
+}
+$("#status").style.cursor = "pointer"; $("#status").onclick = openDiag;
 
 // ================= language toggle + boot =================
 $("#lang").onclick = () => {
