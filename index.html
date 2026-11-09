@@ -56,6 +56,15 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font:15px system-ui,s
 .wleg{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid #ffffff14;font-size:14px;cursor:pointer}
 .wsteps{display:none;margin:0 0 6px;background:#0f141966;border-radius:10px}
 .wsteps.open{display:block}
+.exitb{background:#ff5a5a30;color:#ff9a9a}
+.exitb.arm{background:#ff5a5a;color:#fff;font-weight:700}
+.flash{animation:fl .7s}
+@keyframes fl{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 4px #ff5a5a}}
+.hdrb{display:flex;gap:6px;flex:none}
+details.stl{margin:8px 0 2px;background:#0f141966;border-radius:10px;padding:2px 10px}
+details.stl summary{padding:9px 0;cursor:pointer;font-size:14px;color:var(--acc);font-weight:600}
+.stp{display:flex;gap:8px;align-items:baseline;cursor:pointer}
+.stp small{margin-inline-start:auto;color:var(--mut);white-space:nowrap}
 .diag{font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;word-break:break-all;color:#cfd8e3;user-select:text}
 .maplibregl-ctrl-attrib{font-size:10px}
 </style>
@@ -339,7 +348,7 @@ const T = {
     transitFail: "Bus/train lookup failed: {e}", wDepart: "Head out on {n}", wDepartNoName: "Start walking", wArrive: "You've arrived",
     wLeft: "Turn left", wRight: "Turn right", wSlightLeft: "Bear left", wSlightRight: "Bear right", wSharpLeft: "Sharp left", wSharpRight: "Sharp right",
     wStraight: "Continue straight", wUturn: "Make a U-turn", wRound: "Take the roundabout", wOnto: "{a} onto {n}", wCont: "Continue on {n}",
-    take: "{l} at {tm} from {s}", stopsTo: "{k} stops → {n} at {tm}", back: "Back",
+    take: "{l} at {tm} from {s}", stopsTo: "{k} stops → {n} at {tm}", back: "Back", exit: "✕ Exit", exitSure: "Tap again to exit", showStops: "Show stop names to the destination", hideStops: "Hide stop names", noStopsAlong: "No bus stops found along this route.", stopsLoading: "Loading stops…", busStopsList: "Show all {k} stops",
     locDeniedStart: "Location denied — type a start address", noRail: "Trains and light rail: scheduled times only, no live position.",
     noLive: "No live buses for this line right now (scheduled only).", retry: "Back", place: "Place",
   },
@@ -362,7 +371,7 @@ const T = {
     transitFail: "חיפוש אוטובוסים/רכבות נכשל: {e}", wDepart: "צאו ל{n}", wDepartNoName: "התחילו ללכת", wArrive: "הגעתם",
     wLeft: "פנו שמאלה", wRight: "פנו ימינה", wSlightLeft: "סטו שמאלה", wSlightRight: "סטו ימינה", wSharpLeft: "פנייה חדה שמאלה", wSharpRight: "פנייה חדה ימינה",
     wStraight: "המשיכו ישר", wUturn: "פנו פניית פרסה", wRound: "היכנסו לכיכר", wOnto: "{a} אל {n}", wCont: "המשיכו ב{n}",
-    take: "{l} ב-{tm} מ{s}", stopsTo: "{k} תחנות ← {n} ב-{tm}", back: "חזרה",
+    take: "{l} ב-{tm} מ{s}", stopsTo: "{k} תחנות ← {n} ב-{tm}", back: "חזרה", exit: "✕ יציאה", exitSure: "לחצו שוב ליציאה", showStops: "הצג שמות תחנות עד היעד", hideStops: "הסתר שמות תחנות", noStopsAlong: "לא נמצאו תחנות לאורך המסלול.", stopsLoading: "טוען תחנות…", busStopsList: "הצג את כל {k} התחנות",
     locDeniedStart: "המיקום נחסם — הקלידו כתובת התחלה", noRail: "רכבות ורכבת קלה: לוחות זמנים בלבד, בלי מיקום חי.",
     noLive: "אין כרגע אוטובוסים חיים לקו הזה (לפי לוח זמנים בלבד).", retry: "חזרה", place: "מקום",
   }
@@ -381,7 +390,7 @@ function applyLang() {
 // ================= helpers =================
 const status = m => $("#status").textContent = m;
 const dayStr = off => new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - off * 864e5).toISOString().slice(0, 10);
-const BUILD = "v13";
+const BUILD = "v14";
 let SCHEMA = null;
 const schemaReady = (async () => { try { const r = await fetch(API + "/openapi.json", { signal: AbortSignal.timeout(12000) }); SCHEMA = (await r.json()).paths || null; } catch { SCHEMA = null; } })();
 const paramsOf = path => (SCHEMA?.[path]?.get?.parameters || []).map(p => p.name);
@@ -547,9 +556,9 @@ function stopAt(e) {
 map.on("click", e => {
   $("#sugg").style.display = "none"; document.activeElement?.blur?.();
   if (e.originalEvent?.target?.closest?.(".busMk")) return;                                // bus markers handle their own taps
+  if ($("#sheet.open [data-detail]")) { flashExit(); return; }                             // a route is open: taps on the map do nothing, use Exit
   const st = stopAt(e);
   if (st) { showStop(st); return; }
-  if ($("#sheet.open [data-detail]")) { closeSheet(); return; }                            // a route is open: first tap just closes its panel
   dropPin(e.lngLat.lat, e.lngLat.lng);
 });
 map.on("rotate", () => {
@@ -843,12 +852,66 @@ function updateNav() {        // while walking, light up the step you're on (wit
   });
   if (best && best.d <= 50 && (best.r._id !== hl.id || best.i !== hl.i)) highlightStep(best.r, best.i, false);
 }
+// ---------- leaving a route needs an explicit Exit (two taps) ----------
+const exitBtnHtml = () => `<button class="cb exitb" id="exit">${t("exit")}</button>`;
+function wireExit() {
+  const b = $("#exit"); if (!b) return;
+  let timer = null;
+  b.onclick = () => {
+    if (b.classList.contains("arm")) { clearTimeout(timer); clearRoute(); closeSheet(); return; }
+    b.classList.add("arm"); b.textContent = t("exitSure");
+    timer = setTimeout(() => { b.classList.remove("arm"); b.textContent = t("exit"); }, 3500);
+  };
+}
+function flashExit() {
+  const b = $("#exit") || $("#dx"); if (!b) return;
+  b.classList.remove("flash"); void b.offsetWidth; b.classList.add("flash");
+}
+// bus stops lying within maxM of a walking route, in walking order, same-name neighbours merged
+async function stopsAlongRoute(route, maxM = 35) {
+  const all = await loadAllStops(), c = route.coords;
+  if (!c || c.length < 2) return [];
+  let mnLat = 90, mxLat = -90, mnLon = 180, mxLon = -180;
+  for (const [lo, la] of c) { mnLat = Math.min(mnLat, la); mxLat = Math.max(mxLat, la); mnLon = Math.min(mnLon, lo); mxLon = Math.max(mxLon, lo); }
+  const pad = 0.0006, cum = [0];
+  for (let j = 1; j < c.length; j++) cum[j] = cum[j - 1] + Planner.dist({ lat: c[j - 1][1], lon: c[j - 1][0] }, { lat: c[j][1], lon: c[j][0] });
+  const hits = [];
+  for (const st of all) {
+    if (st.lat < mnLat - pad || st.lat > mxLat + pad || st.lon < mnLon - pad || st.lon > mxLon + pad) continue;
+    const k = Math.cos(st.lat * Math.PI / 180); let best = null;
+    for (let j = 1; j < c.length; j++) {
+      const ax = (c[j - 1][0] - st.lon) * k, ay = c[j - 1][1] - st.lat, bx = (c[j][0] - st.lon) * k, by = c[j][1] - st.lat;
+      const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, u = L ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L)) : 0;
+      const d = Math.hypot(ax + u * dx, ay + u * dy) * 111320;
+      if (!best || d < best.d) best = { d, at: cum[j - 1] + u * (cum[j] - cum[j - 1]) };
+    }
+    if (best && best.d <= maxM) hits.push({ ...st, at: Math.round(best.at), off: Math.round(best.d) });
+  }
+  hits.sort((a, b) => a.at - b.at);
+  const out = [];
+  for (const h of hits) { const p = out[out.length - 1]; if (p && p.name === h.name && h.at - p.at < 80) continue; out.push(h); }
+  return out;
+}
+function wireStopsToggle(route) {
+  const d = $("#wd"); if (!d) return; let loaded = false;
+  d.addEventListener("toggle", async () => {
+    if (!d.open || loaded) return; loaded = true;
+    const box = $("#wstl"); box.innerHTML = `<small class="note">${t("stopsLoading")}</small>`;
+    try {
+      const list = await stopsAlongRoute(route);
+      if (!list.length) { box.innerHTML = `<small class="note">${t("noStopsAlong")}</small>`; return; }
+      box.innerHTML = list.map(x => `<div class="step stp" data-lat="${x.lat}" data-lon="${x.lon}"><span>🚏</span><span>${esc(x.name)}${x.code ? ` <small>#${esc(String(x.code))}</small>` : ""}</span><small>${x.at} m</small></div>`).join("");
+      box.querySelectorAll(".stp").forEach(el => el.onclick = () => map.easeTo({ center: [+el.dataset.lon, +el.dataset.lat], zoom: Math.max(map.getZoom(), 17), duration: 400 }));
+    } catch (e) { loaded = false; box.innerHTML = `<small class="note">${esc(e.message)}</small>`; }
+  });
+}
 function showWalk(from, to, route, onBack) {
   clearRoute(); addPin(from, "#3b9eff"); addPin(to, "#ff4d4d"); drawWalk(route);
   navRoutes = [route];
-  sheet(`<i data-detail></i><h3><span>🚶 ${t("walkSummary", { k: walkMin(route.meters), m: route.meters })}</span>${onBack ? `<button class="cb" id="back">${t("back")}</button>` : ""}</h3>
-    <small>${esc(from.label)} → ${esc(to.label)}</small>${route.approx ? `<small class="note">${t("approx")}</small>` : ""}${stepsHtml(route)}`);
-  wireSteps($("#sheet"));
+  sheet(`<i data-detail></i><h3><span>🚶 ${t("walkSummary", { k: walkMin(route.meters), m: route.meters })}</span><span class="hdrb">${onBack ? `<button class="cb" id="back">${t("back")}</button>` : ""}${exitBtnHtml()}</span></h3>
+    <small>${esc(from.label)} → ${esc(to.label)}</small>${route.approx ? `<small class="note">${t("approx")}</small>` : ""}${stepsHtml(route)}
+    <details class="stl" id="wd"><summary>${t("showStops")}</summary><div id="wstl"></div></details>`);
+  wireSteps($("#sheet")); wireExit(); wireStopsToggle(route);
   if (onBack) $("#back").onclick = onBack;
   if (route.steps.length) highlightStep(route, 0, false);
   updateNav();
@@ -1047,13 +1110,14 @@ async function showOption(o, from, to, onBack) {
     } else {
       const path = l.path.map(s => [s.lon, s.lat]);
       feats.push({ type: "Feature", properties: { kind: "bus", color: VCOLOR[l.vehicle] || VCOLOR.bus }, geometry: { type: "LineString", coordinates: path } }); path.forEach(c => bounds.extend(c));
-      rows.push(`<div class="step">` + (l.vehicle === "rail" ? "🚆" : l.vehicle === "tram" ? "🚊" : "🚌") + " " + t("take", { l: `<b>${esc(l.line)}</b>`, tm: hhmm(l.from.t), s: esc(l.from.name) }) + `<br><small>${t("stopsTo", { k: l.path.length - 1, n: esc(l.to.name), tm: hhmm(l.to.t) })}</small></div>`);
+      rows.push(`<div class="step">` + (l.vehicle === "rail" ? "🚆" : l.vehicle === "tram" ? "🚊" : "🚌") + " " + t("take", { l: `<b>${esc(l.line)}</b>`, tm: hhmm(l.from.t), s: esc(l.from.name) }) + `<br><small>${t("stopsTo", { k: l.path.length - 1, n: esc(l.to.name), tm: hhmm(l.to.t) })}</small>` +
+        `<details class="stl"><summary>${t("busStopsList", { k: l.path.length })}</summary>${l.path.map(p => `<div class="step stp"><span>🚏</span><span>${esc(p.name || "")}</span>${p.t ? `<small>${hhmm(p.t)}</small>` : ""}</div>`).join("")}</details></div>`);
     }
   }
   setSrc("route", { type: "FeatureCollection", features: feats });
   map.fitBounds(bounds, { padding: { top: 90, bottom: 280, left: 40, right: 40 }, duration: 600 });
-  sheet(`<i data-detail></i><h3><span>${hhmm(o.depart)} → ${hhmm(o.arrive)}</span><button class="cb" id="back">${t("back")}</button></h3>` + rows.join(""));
-  $("#back").onclick = onBack;
+  sheet(`<i data-detail></i><h3><span>${hhmm(o.depart)} → ${hhmm(o.arrive)}</span><span class="hdrb"><button class="cb" id="back">${t("back")}</button>${exitBtnHtml()}</span></h3>` + rows.join(""));
+  $("#back").onclick = onBack; wireExit();
   wireSteps($("#sheet"));
   $("#sheet").querySelectorAll(".wleg").forEach(h => h.onclick = () => {
     const box = $("#sheet").querySelector(`.wsteps[data-wl="${h.dataset.wl}"]`), open = box.classList.toggle("open");
