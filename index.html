@@ -381,7 +381,7 @@ function applyLang() {
 // ================= helpers =================
 const status = m => $("#status").textContent = m;
 const dayStr = off => new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - off * 864e5).toISOString().slice(0, 10);
-const BUILD = "v12";
+const BUILD = "v13";
 let SCHEMA = null;
 const schemaReady = (async () => { try { const r = await fetch(API + "/openapi.json", { signal: AbortSignal.timeout(12000) }); SCHEMA = (await r.json()).paths || null; } catch { SCHEMA = null; } })();
 const paramsOf = path => (SCHEMA?.[path]?.get?.parameters || []).map(p => p.name);
@@ -594,6 +594,7 @@ async function ensureStopsAround() {   // fills the cache used by search suggest
 }
 
 // ================= ride info (line name, destination, vehicle type) =================
+const winParams = () => ({ arrival_time_from: iso(new Date(Date.now() - 12 * 3600e3)), arrival_time_to: iso(new Date(Date.now() + 30 * 3600e3)) });
 const rideInfoCache = new Map();
 function seedRideInfo(rows) {            // works on /gtfs_ride_stops rows (they carry gtfs_route__* fields)
   for (const r of rows) {
@@ -606,7 +607,8 @@ function seedRideInfo(rows) {            // works on /gtfs_ride_stops rows (they
 async function rideInfo(ids) {
   const need = ids.filter(i => !rideInfoCache.has(i));
   const chunks = []; for (let i = 0; i < need.length; i += 10) chunks.push(need.slice(i, i + 10));
-  const parts = await Promise.all(chunks.map(c => api("/gtfs_ride_stops/list", { gtfs_ride_ids: c.join(","), limit: 1000 }).catch(() => [])));
+  const parts = await Promise.all(chunks.map(c => apiv("rideInfo", "/gtfs_ride_stops/list", [
+    { gtfs_ride_ids: c.join(","), ...winParams(), limit: 1000 }, { gtfs_ride_ids: c.join(","), limit: 500 }, { gtfs_ride_ids: c.join(","), ...winParams(), limit: 300 }]).catch(() => [])));
   seedRideInfo(parts.flat());
   const out = new Map();
   for (const i of ids) out.set(i, rideInfoCache.get(i) || { name: "?", dest: "", mode: "bus" });
@@ -971,7 +973,7 @@ async function rideStops(ids) {
   const need = ids.filter(i => !rideStopCache.has(i)), chunks = [], d = today();
   for (let i = 0; i < need.length; i += 10) chunks.push(need.slice(i, i + 10));
   const parts = await Promise.all(chunks.map(c => apiv("rideStops", "/gtfs_ride_stops/list", [
-    { gtfs_ride_ids: c.join(","), limit: 3000 }, { gtfs_ride_ids: c.join(","), limit: 1000 }, { gtfs_ride_ids: c.join(","), limit: 3000, date_from: d, date_to: d }])));
+    { gtfs_ride_ids: c.join(","), ...winParams(), limit: 3000 }, { gtfs_ride_ids: c.join(","), ...winParams(), limit: 1000 }, { gtfs_ride_ids: c.join(","), limit: 500 }])));
   seedRideInfo(parts.flat());
   const tmp = new Map();
   for (const row of parts.flat()) {
