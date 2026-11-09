@@ -1,0 +1,1112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1419">
+<title>BusMap</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+:root{--bg:#0f1419;--card:#1a212b;--fg:#e8edf2;--mut:#8b97a5;--acc:#2fd17a;--warn:#ffb020;--rail:#4aa3ff;--tram:#c58bff}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;overflow:hidden}
+#map{position:absolute;inset:0;z-index:0;direction:ltr}
+.bar{position:absolute;z-index:700;left:10px;right:10px;top:max(10px,env(safe-area-inset-top));display:flex;gap:8px}
+.bar input{flex:1;min-width:0;padding:12px 14px;border-radius:12px;border:0;background:var(--card);color:var(--fg);font-size:16px;box-shadow:0 2px 10px #0008}
+.btn{padding:0 13px;min-height:44px;border-radius:12px;border:0;background:var(--card);color:var(--fg);font-size:17px;box-shadow:0 2px 10px #0008}
+#compass{position:absolute;z-index:600;right:10px;top:calc(max(10px,env(safe-area-inset-top)) + 58px);width:44px;padding:0;opacity:.85}
+#cpt{display:inline-block;transition:transform .05s linear;color:#ff5a5a;font-size:18px}
+#sugg{position:absolute;z-index:800;left:10px;right:10px;top:calc(max(10px,env(safe-area-inset-top)) + 54px);max-height:50%;overflow:auto;background:var(--card);border-radius:12px;box-shadow:0 4px 18px #000a;display:none}
+.sg{display:flex;gap:10px;align-items:center;padding:10px 12px;border-top:1px solid #ffffff12;cursor:pointer}
+.sg:first-child{border-top:0}
+.sg small{color:var(--mut)}
+.sgi{background:#0f1419;border-radius:10px;margin-bottom:4px;display:none;max-height:190px;overflow:auto}
+#sheet{position:absolute;z-index:500;left:0;right:0;bottom:0;max-height:52%;overflow:auto;background:var(--card);border-radius:18px 18px 0 0;padding:12px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:0 -4px 20px #0009;transform:translateY(100%);transition:transform .2s}
+#sheet.open{transform:none}
+#sheet h3{font-size:16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.row{padding:10px 0;border-top:1px solid #ffffff14;display:flex;justify-content:space-between;gap:10px;cursor:pointer}
+.row small,.note{color:var(--mut)}
+.note{display:block;margin-top:8px;font-size:13px}
+.tm{text-align:end;white-space:nowrap}
+.pill{background:var(--acc);color:#04210f;font-weight:700;border-radius:8px;padding:2px 8px;white-space:nowrap}
+.pill.rail{background:var(--rail)}.pill.tram{background:var(--tram)}
+#status{position:absolute;z-index:600;left:10px;top:calc(max(10px,env(safe-area-inset-top)) + 58px);font-size:12px;color:var(--mut);background:#0f1419cc;padding:3px 8px;border-radius:8px;max-width:calc(100% - 80px)}
+.busMk{cursor:pointer}
+.bus{background:var(--acc);color:#04210f;font-weight:800;font-size:12px;border-radius:10px;padding:2px 6px;border:2px solid #04210f;white-space:nowrap;text-align:center}
+.bus.old{background:var(--warn)}
+.dir{position:absolute;inset:-12px;pointer-events:none}
+.arrow{position:absolute;left:50%;top:0;margin-left:-5px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid #fff;filter:drop-shadow(0 0 1px #000)}
+.meWrap{width:44px;height:44px;position:relative;pointer-events:none}
+.cone{position:absolute;inset:0;width:44px;height:44px;display:none;overflow:visible}
+.me{position:absolute;left:14px;top:14px;width:16px;height:16px;border-radius:50%;background:#3b9eff;border:3px solid #fff;box-shadow:0 1px 6px #0009}
+.pin{pointer-events:none;width:18px;height:18px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 6px #0009}
+.in{width:100%;padding:11px 12px;margin:4px 0;border-radius:10px;border:0;background:#0f1419;color:var(--fg);font-size:16px}
+.go{width:100%;padding:12px;margin-top:6px;border-radius:10px;border:0;background:var(--acc);color:#04210f;font-weight:800;font-size:16px}
+.acts{display:flex;gap:8px;margin:2px 0 8px;flex-wrap:wrap}
+.cb{padding:8px 12px;border-radius:10px;border:0;background:#2a3441;color:var(--fg);font-size:14px}
+.cb.main{background:var(--acc);color:#04210f;font-weight:700}
+.opt{padding:11px 0;border-top:1px solid #ffffff14;cursor:pointer}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:5px}
+.chip{background:#ffffff1a;border-radius:8px;padding:2px 8px;font-size:13px}
+.step{padding:7px 0;border-top:1px solid #ffffff14;font-size:14px}
+.wstep{display:flex;gap:10px;align-items:center;padding:10px 8px;border-top:1px solid #ffffff14;font-size:14px;cursor:pointer;border-inline-start:4px solid transparent}
+.wstep .ic{font-size:20px;width:26px;text-align:center;flex:none}
+.wstep small{margin-inline-start:auto;color:var(--mut);white-space:nowrap;padding-inline-start:8px}
+.wstep.on{background:#ff8a0030;border-inline-start-color:#ff8a00;font-weight:600}
+.wleg{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid #ffffff14;font-size:14px;cursor:pointer}
+.wsteps{display:none;margin:0 0 6px;background:#0f141966;border-radius:10px}
+.wsteps.open{display:block}
+.maplibregl-ctrl-attrib{font-size:10px}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="bar">
+  <input id="q" autocomplete="off" enterkeyhint="search">
+  <button class="btn" id="lang">עב</button>
+  <button class="btn" id="plan">⇄</button>
+  <button class="btn" id="loc">◎</button>
+</div>
+<div id="sugg"></div>
+<button class="btn" id="compass" aria-label="North"><span id="cpt">▲</span></button>
+<div id="status"></div>
+<div id="sheet"></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+// Typo-tolerant matching for Hebrew + Latin. Pure functions, no DOM.
+const Fuzzy = (() => {
+  const FINAL = { "ך": "כ", "ם": "מ", "ן": "נ", "ף": "פ", "ץ": "צ" };
+  // letters people commonly confuse in Hebrew spelling -> one canonical letter
+  const CONFUSE = { "ע": "א", "ק": "כ", "ט": "ת" };
+
+  function norm(s) {
+    s = String(s || "").toLowerCase().normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")        // latin accents
+      .replace(/[֑-ׇ]/g, "");       // niqqud
+    s = s.replace(/[ךםןףץ]/g, c => FINAL[c]);
+    s = s.replace(/[עקט]/g, c => CONFUSE[c]);
+    s = s.replace(/[׳״"'`´’.,()\-_/\\]/g, " ");   // quotes, geresh, punctuation
+    s = s.replace(/[יו]/g, "");                // ktiv male / haser variants
+    s = s.replace(/ph/g, "f").replace(/c/g, "k");
+    s = s.replace(/(.)\1+/g, "$1");            // doubled letters
+    return s.replace(/\s+/g, " ").trim();
+  }
+
+  function dist(a, b, max) {                   // optimal string alignment distance, early exit
+    if (Math.abs(a.length - b.length) > max) return Infinity;
+    const m = a.length, n = b.length;
+    let p2 = null, p1 = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) {
+      const cur = [i];
+      let rowMin = i;
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        let v = Math.min(p1[j] + 1, cur[j - 1] + 1, p1[j - 1] + cost);
+        if (p2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, p2[j - 2] + 1);
+        cur[j] = v; if (v < rowMin) rowMin = v;
+      }
+      if (rowMin > max) return Infinity;
+      p2 = p1; p1 = cur;
+    }
+    return p1[n] <= max ? p1[n] : Infinity;
+  }
+  const allowed = len => len <= 2 ? 0 : len <= 5 ? 1 : len <= 8 ? 2 : 3;
+
+  // lower = better, null = no match
+  function score(nq, nn) {
+    if (!nq || !nn) return null;
+    if (nn === nq) return 0;
+    if (nn.startsWith(nq)) return 0.5 + (nn.length - nq.length) * 0.001;
+    const qt = nq.split(" "), nt = nn.split(" ");
+    let total = 0;
+    for (const q of qt) {
+      const a = allowed(q.length);
+      let best = Infinity;
+      for (const n of nt) {
+        if (n.startsWith(q)) { best = Math.min(best, 0.2); continue; }
+        if (q.length >= 3 && n.includes(q)) { best = Math.min(best, 0.25); continue; }
+        best = Math.min(best, dist(q, n, a), dist(q, n.slice(0, q.length), a) + 0.3);
+      }
+      if (best > a + 0.3) return null;
+      total += best;
+    }
+    return 1 + total + nn.length * 0.001;
+  }
+
+  const cache = new Map();                       // names repeat across keystrokes
+  const normC = s => { let v = cache.get(s); if (v === undefined) { v = norm(s); if (cache.size > 20000) cache.clear(); cache.set(s, v); } return v; };
+
+  function rank(query, items, getName, limit = 8) {
+    const nq = norm(query);
+    if (!nq) return [];
+    const out = [];
+    for (const it of items) {
+      const s = score(nq, normC(getName(it)));
+      if (s != null) out.push({ item: it, score: s });
+    }
+    out.sort((a, b) => a.score - b.score);
+    return out.slice(0, limit);
+  }
+  return { norm, score, rank };
+})();
+if (typeof module !== "undefined") module.exports = Fuzzy;
+
+</script>
+<script>
+// Pure trip-planning logic. No network, no DOM. Works in browser and node.
+// Stop shape: {id, lat, lon, name, t (ms), seq}
+// rides: Map<rideId, {info:{name, dest}, stops:[stop...] sorted by seq}>
+const Planner = (() => {
+  const WALK_MS = 1.25;          // m/s
+  const DETOUR = 1.3;            // straight line -> street distance
+  const MAX_WALK = 700;          // m, to first/last stop
+  const MAX_XFER = 250;          // m, between transfer stops
+  const XFER_BUFFER = 90e3;      // ms of slack at a transfer
+  const BOARD_BUFFER = 30e3;     // ms of slack when boarding
+
+  const dist = (a, b) => {       // equirectangular, metres; fine at city scale
+    const x = (b.lon - a.lon) * Math.cos((a.lat + b.lat) * Math.PI / 360);
+    const y = b.lat - a.lat;
+    return Math.sqrt(x * x + y * y) * 111320;
+  };
+  const walkMs = m => (m * DETOUR / WALK_MS) * 1000;
+
+  // people walk further to a station than to a bus stop
+  const maxWalkFor = r => r.info.mode === "rail" ? 1200 : r.info.mode === "tram" ? 900 : MAX_WALK;
+
+  function nearest(stops, point, from, to, n, maxWalk = MAX_WALK) {
+    const out = [];
+    for (let i = from; i < to; i++) {
+      const d = dist(stops[i], point);
+      if (d <= maxWalk) out.push({ i, d });
+    }
+    return out.sort((a, b) => a.d - b.d).slice(0, n);
+  }
+
+  function walkLeg(from, to, label) {
+    const d = dist(from, to);
+    return { mode: "walk", from: { ...from, name: from.name || label?.[0] }, to: { ...to, name: to.name || label?.[1] }, meters: Math.round(d * DETOUR), ms: walkMs(d) };
+  }
+  function busLeg(ride, id, i, j) {
+    return { mode: "bus", vehicle: ride.info.mode || "bus", rideId: id, line: ride.info.name, headsign: ride.info.dest, from: ride.stops[i], to: ride.stops[j], path: ride.stops.slice(i, j + 1) };
+  }
+
+  function plan(origin, dest, ridesA, ridesB, now, opts = {}) {
+    const results = [];
+
+    // ---- boarding candidates per ride in A (rides that touch the origin area)
+    const boards = new Map();
+    for (const [id, r] of ridesA) {
+      const c = nearest(r.stops, origin, 0, r.stops.length, 3, maxWalkFor(r))
+        .filter(x => r.stops[x.i].t >= now + walkMs(x.d) + BOARD_BUFFER);
+      if (c.length) boards.set(id, c);
+    }
+
+    // ---- direct
+    for (const [id, cands] of boards) {
+      const r = ridesA.get(id);
+      let best = null;
+      for (const b of cands) {
+        const alts = nearest(r.stops, dest, b.i + 1, r.stops.length, 3, maxWalkFor(r));
+        for (const a of alts) {
+          const arrive = r.stops[a.i].t + walkMs(a.d);
+          if (!best || arrive < best.arrive)
+            best = { arrive, b, a };
+        }
+      }
+      if (best) {
+        const depart = r.stops[best.b.i].t - walkMs(best.b.d);
+        results.push({
+          transfers: 0, depart, arrive: best.arrive,
+          legs: [
+            walkLeg(origin, r.stops[best.b.i], ["Start", null]),
+            busLeg(r, id, best.b.i, best.a.i),
+            walkLeg(r.stops[best.a.i], dest, [null, "Destination"])
+          ]
+        });
+      }
+    }
+
+    // ---- one transfer: ride a (from origin) -> stop x ~ stop y -> ride b (to dest)
+    if (!opts.directOnly) {
+      // alight candidates per ride in B
+      const alights = new Map();
+      for (const [id, r] of ridesB) {
+        const c = nearest(r.stops, dest, 0, r.stops.length, 3, maxWalkFor(r));
+        if (c.length) alights.set(id, c);
+      }
+      // grid index of B stops so we don't do |A|*|B|*n^2 comparisons
+      const CELL = 0.003; // ~330 m
+      const key = (lat, lon) => Math.floor(lat / CELL) + ":" + Math.floor(lon / CELL);
+      const grid = new Map();
+      for (const [id, cs] of alights) {
+        const r = ridesB.get(id);
+        const lastOk = Math.max(...cs.map(c => c.i));
+        for (let j = 0; j < lastOk; j++) {
+          const s = r.stops[j], k = key(s.lat, s.lon);
+          if (!grid.has(k)) grid.set(k, []);
+          grid.get(k).push({ id, j });
+        }
+      }
+      const bestPerPair = new Map();
+      for (const [aid, cands] of boards) {
+        const ra = ridesA.get(aid);
+        const bd = cands[0];                       // nearest boarding stop
+        for (let i = bd.i + 1; i < ra.stops.length; i++) {
+          const x = ra.stops[i];
+          const cx = Math.floor(x.lat / CELL), cy = Math.floor(x.lon / CELL);
+          for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+            const hits = grid.get((cx + dx) + ":" + (cy + dy));
+            if (!hits) continue;
+            for (const h of hits) {
+              if (h.id === aid) continue;
+              const rb = ridesB.get(h.id), y = rb.stops[h.j];
+              const dxy = dist(x, y);
+              if (dxy > MAX_XFER) continue;
+              if (y.t < x.t + walkMs(dxy) + XFER_BUFFER) continue;
+              for (const al of alights.get(h.id)) {
+                if (al.i <= h.j) continue;
+                const arrive = rb.stops[al.i].t + walkMs(al.d);
+                const k2 = ra.info.name + ">" + rb.info.name;
+                const cur = bestPerPair.get(k2);
+                if (!cur || arrive < cur.arrive)
+                  bestPerPair.set(k2, { aid, bid: h.id, bi: bd.i, xi: i, yi: h.j, ai: al.i, arrive, bd, al });
+              }
+            }
+          }
+        }
+      }
+      for (const p of bestPerPair.values()) {
+        const ra = ridesA.get(p.aid), rb = ridesB.get(p.bid);
+        results.push({
+          transfers: 1, arrive: p.arrive, depart: ra.stops[p.bi].t - walkMs(p.bd.d),
+          legs: [
+            walkLeg(origin, ra.stops[p.bi], ["Start", null]),
+            busLeg(ra, p.aid, p.bi, p.xi),
+            walkLeg(ra.stops[p.xi], rb.stops[p.yi]),
+            busLeg(rb, p.bid, p.yi, p.ai),
+            walkLeg(rb.stops[p.ai], dest, [null, "Destination"])
+          ]
+        });
+      }
+    }
+
+    // ---- rank: dedupe by line sequence, drop transfer trips that barely help
+    results.sort((a, b) => a.arrive - b.arrive);
+    const seen = new Set(), out = [];
+    const bestDirect = results.find(r => r.transfers === 0);
+    for (const r of results) {
+      const sig = r.legs.filter(l => l.mode === "bus").map(l => l.line).join(">");
+      if (seen.has(sig)) continue;
+      if (r.transfers && bestDirect && r.arrive > bestDirect.arrive - 5 * 60e3) continue;
+      seen.add(sig); out.push(r);
+      if (out.length >= 6) break;
+    }
+    return out;
+  }
+
+  return { plan, dist, walkMs };
+})();
+if (typeof module !== "undefined") module.exports = Planner;
+
+</script>
+<script>
+"use strict";
+const API = "https://open-bus-stride-api.hasadna.org.il";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ================= language =================
+const T = {
+  en: {
+    searchPh: "Line, stop or place", starting: "starting…", zoomIn: "zoom in to see buses",
+    buses: "{n} buses · updated {tm}", liveFail: "live data failed: {e}", locating: "locating…",
+    locDenied: "location denied — allow it in browser settings", noLoc: "no location on this device",
+    stopsFail: "stops failed: {e}", loading: "Loading…", noDep: "No departures in the next 2 hours.",
+    depFail: "Couldn't load departures ({e}).", now: "now", min: "min", sched: "scheduled times",
+    dirHere: "🧭 Directions here", fromHere: "Directions from here", line: "Line {n}",
+    noLine: "No line {n} running today.", following: "Following line {n} · {c} buses",
+    stopFollow: "All buses", planTitle: "Plan a trip", from: "From (blank = my location)",
+    to: "To (stop, address or place)", find: "Find routes", enterDest: "Enter a destination",
+    findingPlaces: "Finding places…", noStart: "Couldn't find the start", noDest: "Couldn't find the destination",
+    planning: "Planning…", noStopsStart: "No stops within 1 km of the start", noStopsDest: "No stops within 1 km of the destination",
+    noBusesStart: "Nothing leaves near the start in the next 45 minutes", noRoute: "No route found",
+    noRouteSub: "Nothing reachable with at most one transfer in the next couple of hours. Try a closer destination.",
+    direct: "direct", transfer: "1 transfer", walkM: "Walk {m} m ({k} min)", walkTo: "Walk {m} m ({k} min) to {n}",
+    nextLater: "Nothing in the next 2 hours. First buses after that:", hrShort: "h", minShort: "m", tapPin: "Dropped pin", findingAddr: "Finding address…", walkHere: "🚶 Walk here", walkOpt: "Walk", walkSummary: "{k} min · {m} m", approx: "Approximate straight-line route — the walking router is unavailable.",
+    transitFail: "Bus/train lookup failed: {e}", wDepart: "Head out on {n}", wDepartNoName: "Start walking", wArrive: "You've arrived",
+    wLeft: "Turn left", wRight: "Turn right", wSlightLeft: "Bear left", wSlightRight: "Bear right", wSharpLeft: "Sharp left", wSharpRight: "Sharp right",
+    wStraight: "Continue straight", wUturn: "Make a U-turn", wRound: "Take the roundabout", wOnto: "{a} onto {n}", wCont: "Continue on {n}",
+    take: "{l} at {tm} from {s}", stopsTo: "{k} stops → {n} at {tm}", back: "Back",
+    locDeniedStart: "Location denied — type a start address", noRail: "Trains and light rail: scheduled times only, no live position.",
+    noLive: "No live buses for this line right now (scheduled only).", retry: "Back", place: "Place",
+  },
+  he: {
+    searchPh: "קו, תחנה או מקום", starting: "מתחיל…", zoomIn: "התקרבו כדי לראות אוטובוסים",
+    buses: "{n} אוטובוסים · עודכן {tm}", liveFail: "נתוני זמן-אמת נכשלו: {e}", locating: "מאתר מיקום…",
+    locDenied: "המיקום נחסם — אפשרו אותו בהגדרות הדפדפן", noLoc: "אין מיקום במכשיר",
+    stopsFail: "טעינת תחנות נכשלה: {e}", loading: "טוען…", noDep: "אין יציאות בשעתיים הקרובות.",
+    depFail: "לא הצלחתי לטעון יציאות ({e}).", now: "עכשיו", min: "דק׳", sched: "לפי לוח זמנים",
+    dirHere: "🧭 נווט לכאן", fromHere: "נווט מכאן", line: "קו {n}",
+    noLine: "קו {n} לא פועל היום.", following: "עוקב אחרי קו {n} · {c} אוטובוסים",
+    stopFollow: "כל האוטובוסים", planTitle: "תכנון נסיעה", from: "מאיפה (ריק = המיקום שלי)",
+    to: "לאן (תחנה, כתובת או מקום)", find: "חפש מסלולים", enterDest: "הזינו יעד",
+    findingPlaces: "מחפש מקומות…", noStart: "לא מצאתי את נקודת ההתחלה", noDest: "לא מצאתי את היעד",
+    planning: "מתכנן…", noStopsStart: "אין תחנות בטווח קילומטר מההתחלה", noStopsDest: "אין תחנות בטווח קילומטר מהיעד",
+    noBusesStart: "שום דבר לא יוצא ליד ההתחלה ב-45 הדקות הקרובות", noRoute: "לא נמצא מסלול",
+    noRouteSub: "אין מסלול עם החלפה אחת לכל היותר בשעות הקרובות. נסו יעד קרוב יותר.",
+    direct: "ישיר", transfer: "החלפה אחת", walkM: "הליכה {m} מ׳ ({k} דק׳)", walkTo: "הליכה {m} מ׳ ({k} דק׳) אל {n}",
+    nextLater: "אין יציאות בשעתיים הקרובות. היציאות הראשונות אחר כך:", hrShort: "ש׳", minShort: "ד׳", tapPin: "סיכה שהוצבה", findingAddr: "מחפש כתובת…", walkHere: "🚶 הליכה לכאן", walkOpt: "הליכה", walkSummary: "{k} דק׳ · {m} מ׳", approx: "מסלול משוער בקו ישר — שירות ההליכה אינו זמין.",
+    transitFail: "חיפוש אוטובוסים/רכבות נכשל: {e}", wDepart: "צאו ל{n}", wDepartNoName: "התחילו ללכת", wArrive: "הגעתם",
+    wLeft: "פנו שמאלה", wRight: "פנו ימינה", wSlightLeft: "סטו שמאלה", wSlightRight: "סטו ימינה", wSharpLeft: "פנייה חדה שמאלה", wSharpRight: "פנייה חדה ימינה",
+    wStraight: "המשיכו ישר", wUturn: "פנו פניית פרסה", wRound: "היכנסו לכיכר", wOnto: "{a} אל {n}", wCont: "המשיכו ב{n}",
+    take: "{l} ב-{tm} מ{s}", stopsTo: "{k} תחנות ← {n} ב-{tm}", back: "חזרה",
+    locDeniedStart: "המיקום נחסם — הקלידו כתובת התחלה", noRail: "רכבות ורכבת קלה: לוחות זמנים בלבד, בלי מיקום חי.",
+    noLive: "אין כרגע אוטובוסים חיים לקו הזה (לפי לוח זמנים בלבד).", retry: "חזרה", place: "מקום",
+  }
+};
+let lang = "en";
+try { lang = localStorage.getItem("lang") || ((navigator.language || "").startsWith("he") ? "he" : "en"); } catch { }
+const t = (k, v = {}) => String(T[lang][k] ?? T.en[k] ?? k).replace(/\{(\w+)\}/g, (_, x) => v[x] ?? "");
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.documentElement.dir = lang === "he" ? "rtl" : "ltr";
+  $("#q").placeholder = t("searchPh");
+  $("#lang").textContent = lang === "en" ? "עב" : "EN";
+  if (typeof lastFix !== "undefined" && lastFix) lastFix.label = lang === "he" ? "המיקום שלי" : "My location";
+}
+
+// ================= helpers =================
+const status = m => $("#status").textContent = m;
+const dayStr = off => new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - off * 864e5).toISOString().slice(0, 10);
+const BUILD = "v9";
+const dateMode = { i: 0, label: "today" };
+const isBad = e => / (400|422)(:|$)/.test(e.message);
+// GTFS lookups are per-date. If the server has nothing for today (e.g. just after midnight), fall back to yesterday, then to any date.
+async function apiDate(path, params) {
+  const forms = [0, 1, "none"], order = [dateMode.i, 0, 1, 2].filter((v, i, a) => a.indexOf(v) === i);
+  let lastErr = null, lastRes = [];
+  for (const i of order) {
+    const f = forms[i], p = { ...params };
+    if (f === "none") delete p.date; else p.date = dayStr(f);
+    try {
+      const r = await api(path, p);
+      if (!Array.isArray(r) || r.length) { dateMode.i = i; dateMode.label = f === 0 ? "today" : f === 1 ? "yesterday" : "any date"; return r; }
+      lastRes = r;
+    } catch (e) { if (!isBad(e)) throw e; lastErr = e; }
+  }
+  if (lastErr && !lastRes.length) throw lastErr;
+  return lastRes;
+}
+const dedupeStops = ss => { const seen = new Set(); return ss.filter(s => { const k = s.code ?? s.id; if (seen.has(k)) return false; seen.add(k); return true; }); };
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const iso = d => d.toISOString().replace(/\.\d+Z$/, "+00:00");
+const hhmm = ms => new Date(ms).toLocaleTimeString(lang === "he" ? "he-IL" : "en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+const ageSec = x => (Date.now() - new Date(x).getTime()) / 1000;
+const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+const debounce = (fn, ms) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
+
+async function api(path, params = {}) {
+  const u = new URL(API + path);
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) u.searchParams.set(k, v);
+  const ctl = new AbortController();
+  const h = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(u, { signal: ctl.signal });
+    if (!r.ok) {
+      let body = ""; try { body = (await r.text()).replace(/\s+/g, " ").slice(0, 180); } catch { }
+      throw new Error(`${path.split("/")[1]} ${r.status}${body ? ": " + body : ""}`);
+    }
+    return await r.json();
+  } finally { clearTimeout(h); }
+}
+// Try several versions of a request until the server accepts one (400/422 = bad parameters), and remember the winner.
+const apiPref = new Map();
+async function apiv(name, path, variants) {
+  const order = [apiPref.get(name) ?? 0, ...variants.keys()].filter((v, i, a) => a.indexOf(v) === i);
+  let last;
+  for (const i of order) {
+    try { const r = await api(path, variants[i]); apiPref.set(name, i); return r; }
+    catch (e) { last = e; if (!/ (400|422)(:|$)/.test(e.message)) throw e; }
+  }
+  throw last;
+}
+
+let sheetTok = 0;
+function sheet(html) { sheetTok++; const s = $("#sheet"); s.innerHTML = html; s.classList.add("open"); return sheetTok; }
+function closeSheet() { sheetTok++; $("#sheet").classList.remove("open"); }
+
+const modeIcon = m => m === "rail" ? "🚆 " : m === "tram" ? "🚊 " : "";
+const pill = i => `<span class="pill ${i.mode || "bus"}">${modeIcon(i.mode)}${esc(i.name)}</span>`;
+function modeOf(r) {
+  const rt = r.gtfs_route__route_type;
+  if (rt === 2 || rt === "2") return "rail";
+  if (rt === 0 || rt === "0") return "tram";
+  const s = ((r.gtfs_route__agency_name || r.agency_name || "") + " " + (r.gtfs_route__route_long_name || r.route_long_name || "")).toLowerCase();
+  if (/רכבת קלה|light rail|רק"ל|red line|קו האדום|purple line|green line/.test(s)) return "tram";
+  if (/רכבת|israel railways/.test(s)) return "rail";
+  return "bus";
+}
+
+// ================= map (MapLibre: supports rotation) =================
+const EMPTY = { type: "FeatureCollection", features: [] };
+const map = new maplibregl.Map({
+  container: "map", center: [34.7818, 32.0853], zoom: 14, maxZoom: 19.5, maxPitch: 0, pitchWithRotate: false,
+  dragRotate: true, touchZoomRotate: true, attributionControl: false,
+  style: { version: 8, sources: { osm: { type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize: 256, maxzoom: 19, attribution: "© OpenStreetMap" } }, layers: [{ id: "osm", type: "raster", source: "osm" }] }
+});
+map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
+const setSrc = (id, d) => map.getSource(id)?.setData(d);
+
+map.on("load", () => {
+  map.addSource("acc", { type: "geojson", data: EMPTY });
+  map.addLayer({ id: "acc", type: "fill", source: "acc", paint: { "fill-color": "#3b9eff", "fill-opacity": 0.12 } });
+  map.addSource("route", { type: "geojson", data: EMPTY });
+  map.addLayer({ id: "route-walk-casing", type: "line", source: "route", filter: ["==", ["get", "kind"], "walk"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": 10 } });
+  map.addLayer({ id: "route-walk", type: "line", source: "route", filter: ["==", ["get", "kind"], "walk"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#3b9eff", "line-width": 6 } });
+  map.addLayer({ id: "route-bus", type: "line", source: "route", filter: ["==", ["get", "kind"], "bus"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "color"], "line-width": 6 } });
+  map.addSource("walkhl", { type: "geojson", data: EMPTY });
+  map.addLayer({ id: "walkhl-casing", type: "line", source: "walkhl", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": 15 } });
+  map.addLayer({ id: "walkhl", type: "line", source: "walkhl", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ff8a00", "line-width": 9 } });
+  map.addLayer({ id: "walkhl-pt", type: "circle", source: "walkhl", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 9, "circle-color": "#ff8a00", "circle-stroke-color": "#ffffff", "circle-stroke-width": 3 } });
+  map.addSource("stops", { type: "geojson", data: EMPTY });
+  map.addLayer({ id: "stops", type: "circle", source: "stops", paint: { "circle-radius": 9, "circle-color": "#ffffff", "circle-stroke-color": "#3b9eff", "circle-stroke-width": 3 } });
+  loadStops(); pollBuses();
+});
+function stopAt(e) {
+  const toStop = (p, d) => ({ d, s: { id: +p.id, code: p.code, name: p.name, lat: +p.lat, lon: +p.lon } });
+  const c = e.lngLat, r = 22; let best = null;
+  const fs = map.getLayer("stops") ? map.queryRenderedFeatures([[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]], { layers: ["stops"] }) : [];
+  for (const f of fs) { const d = Planner.dist({ lat: +f.properties.lat, lon: +f.properties.lon }, { lat: c.lat, lon: c.lng }); if (!best || d < best.d) best = toStop(f.properties, d); }
+  if (!best) for (const st of stopCache.values()) { const d = Planner.dist(st, { lat: c.lat, lon: c.lng }); if (d < 25 && (!best || d < best.d)) best = toStop(st, d); }   // fallback: any known stop within 25 m
+  return best?.s || null;
+}
+map.on("click", e => {
+  $("#sugg").style.display = "none"; document.activeElement?.blur?.();
+  if (e.originalEvent?.target?.closest?.(".busMk")) return;                                // bus markers handle their own taps
+  const st = stopAt(e);
+  if (st) { showStop(st); return; }
+  if ($("#sheet.open [data-detail]")) { closeSheet(); return; }                            // a route is open: first tap just closes its panel
+  dropPin(e.lngLat.lat, e.lngLat.lng);
+});
+map.on("rotate", () => {
+  const b = map.getBearing();
+  $("#cpt").style.transform = `rotate(${-b}deg)`;
+  updateRotations();
+});
+$("#compass").onclick = () => { if (mode === 2) setMode(1); map.easeTo({ bearing: 0, duration: 350 }); };
+
+function circlePoly(lon, lat, r, n = 40) {
+  const dLat = r / 111320, dLon = r / (111320 * Math.cos(lat * Math.PI / 180));
+  const ring = Array.from({ length: n + 1 }, (_, i) => { const a = i / n * 2 * Math.PI; return [lon + dLon * Math.cos(a), lat + dLat * Math.sin(a)]; });
+  return { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } }] };
+}
+
+// ================= stops =================
+const stopCache = new Map();
+const addStops = ss => { for (const s of ss) if (s.name && !stopCache.has(s.id)) stopCache.set(s.id, { id: s.id, code: s.code, name: s.name, lat: s.lat, lon: s.lon }); };
+const stopsFC = list => ({ type: "FeatureCollection", features: list.map(s => ({ type: "Feature", geometry: { type: "Point", coordinates: [s.lon, s.lat] }, properties: { id: s.id, code: s.code ?? "", name: s.name ?? "", lat: s.lat, lon: s.lon } })) });
+
+let stopsErr = "", stopsInfo = "";   // shown next to the bus count so a stop-loading failure is never silent
+async function loadStops() {
+  if (!map.getSource("stops")) return;
+  if (map.getZoom() < 14.5) { setSrc("stops", EMPTY); stopsInfo = "zoom in for stops"; return; }
+  const b = map.getBounds();
+  const base = { lat__greater_or_equal: b.getSouth(), lat__lower_or_equal: b.getNorth(), lon__greater_or_equal: b.getWest(), lon__lower_or_equal: b.getEast() };
+  try {
+    const ss = dedupeStops(await apiDate("/gtfs_stops/list", { ...base, limit: 300 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...base, limit: 100 }); }));
+    stopsErr = ""; stopsInfo = `stops ${ss.length}${dateMode.label === "today" ? "" : " (" + dateMode.label + ")"}`;
+    addStops(ss); setSrc("stops", stopsFC(ss));
+  } catch (e) { stopsErr = t("stopsFail", { e: e.message }); status(stopsErr); }
+}
+const aroundDone = new Set();
+async function ensureStopsAround() {   // fills the cache used by search suggestions; resolves true if new data arrived
+  const c = map.getCenter(), key = Math.round(c.lat / 0.05) + ":" + Math.round(c.lng / 0.05);
+  if (aroundDone.has(key)) return false;
+  aroundDone.add(key);
+  try {
+    const d = 0.08;
+    { const bb = { lat__greater_or_equal: c.lat - d, lat__lower_or_equal: c.lat + d, lon__greater_or_equal: c.lng - d, lon__lower_or_equal: c.lng + d };
+      addStops(dedupeStops(await apiDate("/gtfs_stops/list", { ...bb, limit: 4000 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...bb, limit: 1000 }); }))); }
+    return true;
+  } catch { aroundDone.delete(key); return false; }
+}
+
+// ================= ride info (line name, destination, vehicle type) =================
+const rideInfoCache = new Map();
+async function rideInfo(ids) {
+  const need = ids.filter(i => !rideInfoCache.has(i));
+  const chunks = []; for (let i = 0; i < need.length; i += 50) chunks.push(need.slice(i, i + 50));
+  const parts = await Promise.all(chunks.map(c => api("/gtfs_rides/list", { gtfs_ride_ids: c.join(","), limit: 100 }).catch(() => [])));
+  for (const r of parts.flat()) {
+    const long = r.gtfs_route__route_long_name || r.route_long_name || "";
+    rideInfoCache.set(r.id, { name: r.gtfs_route__route_short_name || r.route_short_name || "?", dest: long.split("<->").pop().replace(/#.*$/, "").replace(/-\d+$/, ""), mode: modeOf(r) });
+  }
+  const out = new Map();
+  for (const i of ids) out.set(i, rideInfoCache.get(i) || { name: "?", dest: "", mode: "bus" });
+  return out;
+}
+
+// ================= live buses =================
+let busMarkers = new Map(), followLines = null, pollBusy = false;
+const routeNames = new Map(), lineNames = new Set();
+
+function updateRotations() {
+  const b = map.getBearing();
+  for (const m of busMarkers.values()) if (m._dir && m._bearing != null) m._dir.style.transform = `rotate(${m._bearing - b}deg)`;
+  applyHeading();
+}
+
+async function pollBuses() {
+  if (pollBusy || !map.loaded?.() && !map.getSource("stops")) return;
+  pollBusy = true;
+  try {
+    const now = new Date();
+    const p = { recorded_at_time_from: iso(new Date(now - 4 * 60 * 1000)), recorded_at_time_to: iso(now), order_by: "recorded_at_time desc", limit: 400 };
+    if (followLines) p.siri_routes__line_refs = followLines.lineRefs.join(",");
+    else {
+      if (map.getZoom() < 14) { for (const m of busMarkers.values()) m.remove(); busMarkers.clear(); status(t("zoomIn")); return; }
+      const b = map.getBounds();
+      Object.assign(p, { lat__greater_or_equal: b.getSouth(), lat__lower_or_equal: b.getNorth(), lon__greater_or_equal: b.getWest(), lon__lower_or_equal: b.getEast() });
+    }
+    const locs = await api("/siri_vehicle_locations/list", p);
+    const latest = new Map();
+    for (const l of locs) { const k = l.siri_ride__vehicle_ref ?? l.siri_ride_id ?? l.id; if (!latest.has(k)) latest.set(k, l); }
+    await resolveNames([...latest.values()]);
+    const seen = new Set(), b0 = map.getBearing();
+    for (const [k, l] of latest) {
+      seen.add(k);
+      const old = ageSec(l.recorded_at_time) > 90, name = routeNames.get(l.siri_route__line_ref) || "•";
+      if (name !== "•") lineNames.add(name);
+      let m = busMarkers.get(k);
+      if (!m) {
+        const el = document.createElement("div");
+        el.className = "busMk"; el.innerHTML = '<div class="dir"><i class="arrow"></i></div><div class="bus"></div>';
+        m = new maplibregl.Marker({ element: el }).setLngLat([l.lon, l.lat]).setPopup(new maplibregl.Popup({ offset: 16, closeButton: false })).addTo(map);
+        m._dir = el.querySelector(".dir"); m._lbl = el.querySelector(".bus");
+        busMarkers.set(k, m);
+      } else m.setLngLat([l.lon, l.lat]);
+      m._lbl.textContent = name; m._lbl.className = "bus" + (old ? " old" : "");
+      m._bearing = l.bearing ?? null;
+      m._dir.style.display = m._bearing == null ? "none" : "block";
+      if (m._bearing != null) m._dir.style.transform = `rotate(${m._bearing - b0}deg)`;
+      m.getPopup().setText(`${t("line", { n: name })} · ${Math.round(l.velocity ?? 0)} km/h · ${Math.round(ageSec(l.recorded_at_time))}s`);
+    }
+    for (const [k, m] of busMarkers) if (!seen.has(k)) { m.remove(); busMarkers.delete(k); }
+    status(t("buses", { n: latest.size, tm: hhmm(Date.now()) }) + (stopsErr ? " · " + stopsErr : stopsInfo ? " · " + stopsInfo : "") + " · " + BUILD);
+  } catch (e) { status(t("liveFail", { e: e.message })); }
+  finally { pollBusy = false; }
+}
+async function resolveNames(locs) {
+  const missing = [...new Set(locs.map(l => l.siri_route__line_ref).filter(r => r != null && !routeNames.has(r)))];
+  if (!missing.length) return;
+  try {
+    const rs = await apiDate("/gtfs_routes/list", { line_refs: missing.join(","), limit: 200 });
+    for (const r of rs) routeNames.set(r.line_ref, r.route_short_name);
+  } catch { /* cosmetic */ }
+  for (const m of missing) if (!routeNames.has(m)) routeNames.set(m, "•");
+}
+
+async function followLineByNumber(num) {
+  const my = sheet(`<small>${t("loading")}</small>`);
+  try {
+    const rs = await apiDate("/gtfs_routes/list", { route_short_name: num, limit: 80 });
+    if (my !== sheetTok) return;
+    if (!rs.length) { sheet(`<small>${esc(t("noLine", { n: num }))}</small>`); return; }
+    lineNames.add(num);
+    followLines = { label: num, lineRefs: [...new Set(rs.map(r => r.line_ref).filter(x => x != null))] };
+    for (const m of busMarkers.values()) m.remove(); busMarkers.clear();
+    await pollBuses();
+    const bounds = new maplibregl.LngLatBounds(); let n = 0;
+    for (const m of busMarkers.values()) { bounds.extend(m.getLngLat()); n++; }
+    if (n) map.fitBounds(bounds, { padding: 70, maxZoom: 16, duration: 600 });
+    const mode = modeOf(rs[0]);
+    sheet(`<h3><span>${modeIcon(mode)}${esc(t("following", { n: num, c: n }))}</span><button class="cb" id="unf">${t("stopFollow")}</button></h3>` +
+      (n ? "" : `<small class="note">${t("noLive")}</small>`) + (mode !== "bus" ? `<small class="note">${t("noRail")}</small>` : ""));
+    $("#unf").onclick = () => { followLines = null; closeSheet(); loadStops(); pollBuses(); };
+  } catch (e) { sheet(`<small>${esc(e.message)}</small>`); }
+}
+
+// ================= places + search suggestions =================
+const placeCache = new Map();
+async function geocode(q) {
+  const key = lang + "|" + q;
+  if (placeCache.has(key)) return placeCache.get(key);
+  const c = map.getCenter(), u = new URL("https://nominatim.openstreetmap.org/search");
+  u.search = new URLSearchParams({ format: "json", limit: 5, countrycodes: "il", q, "accept-language": lang === "he" ? "he,en" : "en,he", viewbox: [c.lng - 0.6, c.lat + 0.6, c.lng + 0.6, c.lat - 0.6].join(",") });
+  const r = await fetch(u); if (!r.ok) throw new Error("geocoder " + r.status);
+  const out = (await r.json()).map(x => ({ lat: +x.lat, lon: +x.lon, label: x.display_name.split(",").slice(0, 3).join(",") }));
+  placeCache.set(key, out); return out;
+}
+const toPlace = it => it.kind === "stop" ? { lat: it.stop.lat, lon: it.stop.lon, label: it.stop.name } : it.place;
+
+function bindSuggest(input, box, opt) {
+  let seq = 0, timer, ptimer;
+  const show = items => {
+    input._items = items; input._itemsFor = input.value.trim();
+    box.innerHTML = items.map((it, i) => `<div class="sg" data-i="${i}"><span>${it.icon}</span><div>${esc(it.title)}${it.sub ? `<br><small>${esc(it.sub)}</small>` : ""}</div></div>`).join("");
+    box.style.display = items.length ? "block" : "none";
+    box.querySelectorAll(".sg").forEach(el => el.onclick = () => pick(items[el.dataset.i]));
+  };
+  const local = q => {
+    const items = [];
+    if (opt.lines && /^[0-9]{1,3}[A-Za-zא-ת]?$/.test(q)) {
+      const near = [...lineNames].filter(n => n.startsWith(q) && n !== q).sort((a, b) => a.length - b.length || a.localeCompare(b, undefined, { numeric: true })).slice(0, 4);
+      for (const n of [q, ...near]) items.push({ kind: "line", line: n, title: t("line", { n }), icon: "🚌" });
+    }
+    if (opt.stops) {
+      const c = map.getCenter(), byName = new Map();
+      for (const s of stopCache.values()) { const d = (s.lat - c.lat) ** 2 + (s.lon - c.lng) ** 2, cur = byName.get(s.name); if (!cur || d < cur.d) byName.set(s.name, { s, d }); }
+      for (const r of Fuzzy.rank(q, [...byName.values()], x => x.s.name, 5)) items.push({ kind: "stop", stop: r.item.s, title: r.item.s.name, sub: "#" + r.item.s.code, icon: "🚏" });
+    }
+    return items;
+  };
+  const run = () => {
+    const q = input.value.trim(), my = ++seq;
+    if (!q) { show([]); return; }
+    let base = local(q); show(base);
+    ensureStopsAround().then(added => { if (added && my === seq) { base = local(q); show(base); } });
+    clearTimeout(ptimer);
+    if (opt.places && q.length >= 3) ptimer = setTimeout(async () => {
+      const ps = await geocode(q).catch(() => []);
+      if (my === seq) show([...base, ...ps.slice(0, 4).map(p => ({ kind: "place", place: p, title: p.label, icon: "📍" }))]);
+    }, 550);
+  };
+  const pick = it => { box.style.display = "none"; input.blur(); opt.onPick(it); };
+  input.addEventListener("input", () => { input._chosen = null; clearTimeout(timer); timer = setTimeout(run, 120); });
+  input.addEventListener("focus", () => { ensureStopsAround(); if (input.value.trim()) run(); });
+  input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); const it = input._items?.[0]; if (it) pick(it); else run(); } });
+}
+
+let pins = [];
+function clearRoute() { setSrc("route", EMPTY); clearHighlight(); navRoutes = []; pins.forEach(p => p.remove()); pins = []; }
+function addPin(p, color) {
+  const el = document.createElement("div"); el.className = "pin"; el.style.background = color;
+  pins.push(new maplibregl.Marker({ element: el }).setLngLat([p.lon, p.lat]).addTo(map));
+}
+
+function placeActions(p) {
+  return `<div class="acts"><button class="cb main" data-a="to">${t("dirHere")}</button><button class="cb" data-a="walk">${t("walkHere")}</button><button class="cb" data-a="from">${t("fromHere")}</button></div>`;
+}
+function wireActions(p) {
+  const s = $("#sheet");
+  s.querySelector('[data-a="to"]')?.addEventListener("click", () => directionsTo(p));
+  s.querySelector('[data-a="walk"]')?.addEventListener("click", () => walkToPlace(p));
+  s.querySelector('[data-a="from"]')?.addEventListener("click", () => openPlanner({ from: p }));
+}
+
+// ---------- walking: real street routes from the OSM foot router, straight line as fallback ----------
+const walkCache = new Map();
+const walkMin = m => Math.max(1, Math.round(m / 1.25 / 60));
+async function walkRoute(a, b) {
+  const key = [a.lat, a.lon, b.lat, b.lon].map(x => x.toFixed(5)).join();
+  if (walkCache.has(key)) return walkCache.get(key);
+  let res;
+  try {
+    const ctl = new AbortController(), h = setTimeout(() => ctl.abort(), 7000);
+    const r = await fetch(`https://routing.openstreetmap.de/routed-foot/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson&steps=true`, { signal: ctl.signal });
+    clearTimeout(h);
+    if (!r.ok) throw new Error(r.status);
+    const rt = (await r.json()).routes?.[0];
+    if (!rt) throw new Error("no route");
+    res = { coords: rt.geometry.coordinates, meters: Math.round(rt.distance), approx: false,
+      steps: (rt.legs[0]?.steps || []).map(s => ({ m: s.maneuver || {}, name: s.name || "", d: Math.round(s.distance), coords: s.geometry?.coordinates || [], loc: s.maneuver?.location })) };
+  } catch {
+    res = { coords: [[a.lon, a.lat], [b.lon, b.lat]], meters: Math.round(Planner.dist(a, b) * 1.3), steps: [], approx: true };
+  }
+  walkCache.set(key, res); return res;
+}
+function stepText(s) {
+  const type = s.m.type, mod = s.m.modifier, name = s.name || "";
+  if (type === "depart") return name ? t("wDepart", { n: name }) : t("wDepartNoName");
+  if (type === "arrive") return t("wArrive");
+  if (/roundabout|rotary/.test(type)) return t("wRound");
+  if (type === "continue" && (!mod || mod === "straight")) return name ? t("wCont", { n: name }) : t("wStraight");
+  const key = { left: "wLeft", right: "wRight", "slight left": "wSlightLeft", "slight right": "wSlightRight", "sharp left": "wSharpLeft", "sharp right": "wSharpRight", straight: "wStraight", uturn: "wUturn" }[mod] || "wStraight";
+  return name ? t("wOnto", { a: t(key), n: name }) : t(key);
+}
+function drawWalk(route) {
+  setSrc("route", { type: "FeatureCollection", features: [{ type: "Feature", properties: { kind: "walk" }, geometry: { type: "LineString", coordinates: route.coords } }] });
+  const b = new maplibregl.LngLatBounds(); route.coords.forEach(c => b.extend(c));
+  map.fitBounds(b, { padding: { top: 90, bottom: 300, left: 40, right: 40 }, maxZoom: 18, duration: 600 });
+}
+// ---------- turn-by-turn: highlighted route on the map + the current step lit up ----------
+const walkReg = new Map(); let walkRegN = 0;
+const regWalk = r => { if (!r._id) { r._id = ++walkRegN; walkReg.set(r._id, r); } return r._id; };
+function stepIcon(s) {
+  const ty = s.m.type, mo = s.m.modifier;
+  if (ty === "depart") return "🚶";
+  if (ty === "arrive") return "📍";
+  if (/roundabout|rotary/.test(ty)) return "⟳";
+  return { left: "↰", right: "↱", "slight left": "↖", "slight right": "↗", "sharp left": "↰", "sharp right": "↱", straight: "↑", uturn: "↶" }[mo] || "↑";
+}
+function stepsHtml(route) {
+  const id = regWalk(route);
+  return route.steps.map((s, i) => `<div class="wstep" data-wr="${id}" data-si="${i}"><span class="ic">${stepIcon(s)}</span><span>${esc(stepText(s))}</span>${s.d ? `<small>${s.d} m</small>` : ""}</div>`).join("");
+}
+let hl = { id: 0, i: -1 }, navRoutes = [];
+function clearHighlight() { hl = { id: 0, i: -1 }; setSrc("walkhl", EMPTY); }
+function highlightStep(route, i, fly) {
+  const s = route?.steps?.[i]; if (!s) return;
+  const id = regWalk(route); hl = { id, i };
+  const pts = s.coords?.length ? s.coords : (s.loc ? [s.loc] : []), feats = [];
+  if (pts.length > 1) feats.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: pts } });
+  if (pts.length) feats.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: pts[0] } });
+  setSrc("walkhl", { type: "FeatureCollection", features: feats });
+  document.querySelectorAll(".wstep.on").forEach(el => el.classList.remove("on"));
+  const el = document.querySelector(`.wstep[data-wr="${id}"][data-si="${i}"]`);
+  if (el) { el.classList.add("on"); el.scrollIntoView?.({ block: "nearest", behavior: "smooth" }); }
+  if (fly && pts.length) { const b = new maplibregl.LngLatBounds(); pts.forEach(c => b.extend(c)); map.fitBounds(b, { padding: { top: 100, bottom: 320, left: 60, right: 60 }, maxZoom: 18.5, duration: 450 }); }
+}
+function wireSteps(root) { root.querySelectorAll(".wstep").forEach(el => el.onclick = () => highlightStep(walkReg.get(+el.dataset.wr), +el.dataset.si, true)); }
+function segDist(p, a, b) {   // metres from point p to segment a-b, all [lon, lat]
+  const k = Math.cos(p[1] * Math.PI / 180), ax = (a[0] - p[0]) * k, ay = a[1] - p[1], bx = (b[0] - p[0]) * k, by = b[1] - p[1];
+  const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  const u = L ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L)) : 0;
+  return Math.hypot(ax + u * dx, ay + u * dy) * 111320;
+}
+function updateNav() {        // while walking, light up the step you're on (within 50 m of the route)
+  if (!lastFix || !navRoutes.length) return;
+  const p = [lastFix.lon, lastFix.lat]; let best = null;
+  for (const r of navRoutes) r.steps.forEach((s, i) => {
+    const c = s.coords || []; if (c.length < 2) return;
+    let d = Infinity; for (let j = 1; j < c.length; j++) d = Math.min(d, segDist(p, c[j - 1], c[j]));
+    if (!best || d < best.d) best = { r, i, d };
+  });
+  if (best && best.d <= 50 && (best.r._id !== hl.id || best.i !== hl.i)) highlightStep(best.r, best.i, false);
+}
+function showWalk(from, to, route, onBack) {
+  clearRoute(); addPin(from, "#3b9eff"); addPin(to, "#ff4d4d"); drawWalk(route);
+  navRoutes = [route];
+  sheet(`<i data-detail></i><h3><span>🚶 ${t("walkSummary", { k: walkMin(route.meters), m: route.meters })}</span>${onBack ? `<button class="cb" id="back">${t("back")}</button>` : ""}</h3>
+    <small>${esc(from.label)} → ${esc(to.label)}</small>${route.approx ? `<small class="note">${t("approx")}</small>` : ""}${stepsHtml(route)}`);
+  wireSteps($("#sheet"));
+  if (onBack) $("#back").onclick = onBack;
+  if (route.steps.length) highlightStep(route, 0, false);
+  updateNav();
+}
+
+// ---------- tap anywhere on the map: address + route options ----------
+const revCache = new Map();
+async function reverseGeocode(lat, lon) {
+  const key = lang + lat.toFixed(5) + lon.toFixed(5);
+  if (revCache.has(key)) return revCache.get(key);
+  const u = new URL("https://nominatim.openstreetmap.org/reverse");
+  u.search = new URLSearchParams({ format: "jsonv2", lat, lon, zoom: 18, addressdetails: 1, "accept-language": lang === "he" ? "he,en" : "en,he" });
+  const r = await fetch(u); if (!r.ok) throw new Error("geocoder " + r.status);
+  const j = await r.json(); if (j.error) throw new Error(j.error);
+  const a = j.address || {};
+  const road = a.road || a.pedestrian || a.footway || a.path || a.neighbourhood || "";
+  const street = road ? road + (a.house_number ? " " + a.house_number : "") : "";
+  const city = a.city || a.town || a.village || a.suburb || "";
+  const poi = j.name && j.name !== road ? j.name : "";
+  const title = poi || street || String(j.display_name || "").split(",")[0] || "";
+  const res = { title, sub: [poi ? street : "", city].filter(Boolean).join(", "), label: [title, city].filter(Boolean).join(", ") };
+  revCache.set(key, res); return res;
+}
+async function dropPin(lat, lon) {
+  clearRoute();
+  const p = { lat, lon, label: t("tapPin") };
+  addPin(p, "#ff4d4d");
+  map.easeTo({ center: [lon, lat], offset: [0, -140], duration: 300 });   // keep the pin above the sheet
+  const my = sheet(`<h3><span id="pt">📍 ${esc(p.label)}</span><button class="cb" id="xp">✕</button></h3><small id="ps">${t("findingAddr")}</small>${placeActions(p)}`);
+  wireActions(p);
+  $("#xp").onclick = () => { clearRoute(); closeSheet(); };
+  try {
+    const r = await reverseGeocode(lat, lon);
+    p.label = r.label || (lat.toFixed(5) + ", " + lon.toFixed(5));
+    if (my === sheetTok) { $("#pt").textContent = "📍 " + (r.title || p.label); $("#ps").textContent = r.sub; }
+  } catch {
+    p.label = lat.toFixed(5) + ", " + lon.toFixed(5);
+    if (my === sheetTok) { $("#pt").textContent = "📍 " + p.label; $("#ps").textContent = ""; }
+  }
+}
+async function walkToPlace(place) {
+  sheet(`<small>${t("planning")}</small>`);
+  try { const from = await whereAmI(); showWalk(from, place, await walkRoute(from, place)); }
+  catch (e) { sheet(`<small>${esc(e.message)}</small>`); }
+}
+function focusPlace(p) {
+  clearRoute(); addPin(p, "#ff4d4d");
+  map.flyTo({ center: [p.lon, p.lat], zoom: 16, duration: 700 });
+  sheet(`<h3><span>📍 ${esc(p.label)}</span></h3>` + placeActions(p)); wireActions(p);
+}
+function focusStop(s) {
+  clearRoute(); addPin(s, "#3b9eff");
+  map.flyTo({ center: [s.lon, s.lat], zoom: 17, duration: 700 });
+  showStop(s);
+}
+
+$("#q").addEventListener("blur", () => setTimeout(() => { $("#sugg").style.display = "none"; }, 250));
+bindSuggest($("#q"), $("#sugg"), {
+  lines: true, stops: true, places: true,
+  onPick: it => {
+    $("#q").value = it.kind === "line" ? it.title : it.kind === "stop" ? it.stop.name : it.place.label;
+    if (it.kind === "line") followLineByNumber(it.line); else if (it.kind === "stop") focusStop(it.stop); else focusPlace(it.place);
+  }
+});
+
+// ================= stop sheet: lines + schedule =================
+async function showStop(s) {
+  const p = { lat: s.lat, lon: s.lon, label: s.name };
+  const my = sheet(`<h3><span>🚏 ${esc(s.name)} <small>#${esc(s.code ?? "")}</small></span></h3>${placeActions(p)}<div id="sb"><small>${t("loading")}</small></div>`);
+  wireActions(p);
+  try {
+    const now = Date.now();
+    const q = hrs => {
+      const A = { gtfs_stop_ids: s.id, arrival_time_from: iso(new Date(now - 60e3)), arrival_time_to: iso(new Date(now + hrs * 3600e3)) };
+      return apiv("stopDeps", "/gtfs_ride_stops/list", [{ ...A, order_by: "arrival_time asc", limit: 300 }, { ...A, limit: 300 }, { ...A, order_by: "arrival_time asc", limit: 100 }, { ...A, limit: 100 }]);
+    };
+    let rs = await q(2), later = false;
+    if (!rs.length) { rs = await q(14); later = true; }      // nothing soon (e.g. night): show the first buses after that
+    if (my !== sheetTok) return;
+    if (!rs.length) { $("#sb").innerHTML = `<small>${t("noDep")}</small>`; return; }
+    const info = await rideInfo([...new Set(rs.map(r => r.gtfs_ride_id))]);
+    if (my !== sheetTok) return;
+    const groups = new Map();
+    for (const r of rs) {
+      const i = info.get(r.gtfs_ride_id), k = i.name + "|" + i.dest;
+      if (!groups.has(k)) groups.set(k, { i, times: [] });
+      groups.get(k).times.push(Date.parse(r.arrival_time || r.departure_time));
+    }
+    for (const g of groups.values()) g.times.sort((a, b) => a - b);
+    const list = [...groups.values()].sort((a, b) => a.times[0] - b.times[0]);
+    const eta = m => m <= 0 ? t("now") : m < 60 ? m + " " + t("min") : Math.floor(m / 60) + t("hrShort") + " " + (m % 60) + t("minShort");
+    const rows = list.map(g => {
+      const mins = Math.round((g.times[0] - now) / 60000);
+      return `<div class="row" data-l="${esc(g.i.name)}"><div>${pill(g.i)} <small>${esc(g.i.dest)}</small></div><div class="tm"><b>${eta(mins)}</b><br><small>${g.times.slice(0, 4).map(hhmm).join(" · ")}</small></div></div>`;
+    }).join("");
+    const rail = list.some(g => g.i.mode !== "bus");
+    $("#sb").innerHTML = (later ? `<small class="note" style="margin:0 0 6px">${t("nextLater")}</small>` : "") + rows + `<small class="note">${t("sched")}${rail ? " · " + t("noRail") : ""}</small>`;
+    $("#sb").querySelectorAll(".row").forEach(el => el.onclick = () => followLineByNumber(el.dataset.l));
+  } catch (e) { if (my === sheetTok) $("#sb").innerHTML = `<small>${esc(t("depFail", { e: e.message }))}</small>`; }
+}
+
+// ================= trip planner =================
+const rideStopCache = new Map();
+async function stopsNear(p, r = 1000) {
+  const d = r / 111320, d2 = today();
+  const base = { lat__greater_or_equal: p.lat - d, lat__lower_or_equal: p.lat + d, lon__greater_or_equal: p.lon - d * 1.2, lon__lower_or_equal: p.lon + d * 1.2 };
+  const ss = dedupeStops(await apiDate("/gtfs_stops/list", { ...base, limit: 300 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...base, limit: 100 }); }));
+  return ss.sort((a, b) => Planner.dist(a, p) - Planner.dist(b, p)).slice(0, 120).map(s => s.id);   // nearest 120 keeps the URL short
+}
+async function ridesAtStops(stopIds, from, to, cap) {
+  const ids = stopIds.join(","), d = today(), f = iso(new Date(from)), tt = iso(new Date(to));
+  const A = { gtfs_stop_ids: ids, arrival_time_from: f, arrival_time_to: tt }, D = { gtfs_stop_ids: ids, departure_time_from: f, departure_time_to: tt };
+  const rs = await apiv("ridesAtStops", "/gtfs_ride_stops/list", [
+    { ...A, order_by: "arrival_time asc", limit: 1500 }, { ...A, limit: 1500 },
+    { ...A, limit: 1500, date_from: d, date_to: d }, { ...D, limit: 1500 }, { ...D, order_by: "departure_time asc", limit: 1500 },
+    // last resorts: far fewer stops and rows, in case the server rejects big requests
+    { ...A, gtfs_stop_ids: stopIds.slice(0, 40).join(","), limit: 400 }, { ...A, gtfs_stop_ids: stopIds.slice(0, 15).join(","), limit: 100 }]);
+  rs.sort((a, b) => Date.parse(a.arrival_time || a.departure_time) - Date.parse(b.arrival_time || b.departure_time));
+  return [...new Set(rs.map(r => r.gtfs_ride_id))].slice(0, cap);
+}
+async function rideStops(ids) {
+  const need = ids.filter(i => !rideStopCache.has(i)), chunks = [], d = today();
+  for (let i = 0; i < need.length; i += 10) chunks.push(need.slice(i, i + 10));
+  const parts = await Promise.all(chunks.map(c => apiv("rideStops", "/gtfs_ride_stops/list", [
+    { gtfs_ride_ids: c.join(","), limit: 3000 }, { gtfs_ride_ids: c.join(","), limit: 1000 }, { gtfs_ride_ids: c.join(","), limit: 3000, date_from: d, date_to: d }])));
+  const tmp = new Map();
+  for (const row of parts.flat()) {
+    if (row.gtfs_stop__lat == null) throw new Error("Unexpected API shape — ride-stop fields: " + Object.keys(row).join(","));
+    if (!tmp.has(row.gtfs_ride_id)) tmp.set(row.gtfs_ride_id, []);
+    tmp.get(row.gtfs_ride_id).push({ id: row.gtfs_stop_id, lat: row.gtfs_stop__lat, lon: row.gtfs_stop__lon, name: row.gtfs_stop__name, t: Date.parse(row.arrival_time || row.departure_time), seq: row.stop_sequence });
+  }
+  for (const [id, a] of tmp) { a.sort((x, y) => x.seq - y.seq); rideStopCache.set(id, a); }
+  return ids.filter(i => rideStopCache.has(i)).map(i => [i, rideStopCache.get(i)]);
+}
+
+async function planTrip(from, to) {
+  clearRoute(); sheet(`<small>${t("planning")}</small>`);
+  const now = Date.now();
+  const [so, sd] = await Promise.all([stopsNear(from), stopsNear(to)]);
+  if (!so.length) throw new Error(t("noStopsStart"));
+  if (!sd.length) throw new Error(t("noStopsDest"));
+  const [idsA, idsB] = await Promise.all([ridesAtStops(so, now, now + 45 * 60e3, 50), ridesAtStops(sd, now, now + 120 * 60e3, 70)]);
+  if (!idsA.length) throw new Error(t("noBusesStart"));
+  const all = [...new Set([...idsA, ...idsB])];
+  const [stops, info] = await Promise.all([rideStops(all), rideInfo(all)]);
+  const sm = new Map(stops);
+  const mk = ids => new Map(ids.filter(id => sm.has(id)).map(id => [id, { info: info.get(id), stops: sm.get(id) }]));
+  return Planner.plan(from, to, mk(idsA), mk(idsB), now);
+}
+// Walking is always computed; transit failures no longer hide it.
+async function runPlan(from, to) {
+  clearRoute(); sheet(`<small>${t("planning")}</small>`);
+  const straight = Planner.dist(from, to);
+  const walkP = straight < 6000 ? walkRoute(from, to) : Promise.resolve(null);
+  let opts = [], err = null;
+  try { opts = await planTrip(from, to); } catch (e) { err = e; }
+  const walk = await walkP;
+  renderOptions(opts, from, to, walk, err);
+}
+function renderOptions(opts, from, to, walk, err) {
+  const redo = () => renderOptions(opts, from, to, walk, err);
+  const rows = [];
+  const showWalkOpt = walk && (walk.meters <= 2500 || !opts.length);
+  if (showWalkOpt) rows.push(`<div class="opt" data-w="1"><b>🚶 ${t("walkOpt")}</b> · ${t("walkSummary", { k: walkMin(walk.meters), m: walk.meters })}</div>`);
+  opts.forEach((o, i) => {
+    const chips = o.legs.map(l => l.mode === "bus" ? pill({ name: l.line, mode: l.vehicle }) : (l.meters > 40 ? `<span class="chip">🚶${Math.max(1, Math.round(l.ms / 60000))}′</span>` : "")).join("");
+    rows.push(`<div class="opt" data-i="${i}"><b>${hhmm(o.depart)} → ${hhmm(o.arrive)}</b> · ${Math.round((o.arrive - o.depart) / 60000)} ${t("min")} · ${o.transfers ? t("transfer") : t("direct")}<div class="chips">${chips}</div></div>`);
+  });
+  let body = rows.join("");
+  if (err) body += `<small class="note">${esc(t("transitFail", { e: err.message }))}</small>`;
+  else if (!opts.length) body += `<small class="note">${t("noRouteSub")}</small>`;
+  if (!rows.length && !err) body = `<small>${t("noRouteSub")}</small>`;
+  sheet(`<h3>${esc(from.label)} → ${esc(to.label)}</h3>${body}<div class="acts" style="margin-top:8px"><button class="cb" id="rb">${t("retry")}</button></div>`);
+  $("#rb").onclick = () => openPlanner({ from, to });
+  $("#sheet").querySelector("[data-w]")?.addEventListener("click", () => showWalk(from, to, walk, redo));
+  $("#sheet").querySelectorAll("[data-i]").forEach(el => el.onclick = () => showOption(opts[el.dataset.i], from, to, redo));
+}
+const VCOLOR = { bus: "#2fd17a", rail: "#4aa3ff", tram: "#c58bff" };
+async function showOption(o, from, to, onBack) {
+  clearRoute(); addPin(from, "#3b9eff"); addPin(to, "#ff4d4d");
+  sheet(`<small>${t("loading")}</small>`);
+  // street-accurate walking for each walking leg (cached, in parallel)
+  const walks = await Promise.all(o.legs.map(l => l.mode === "walk" && l.meters > 40 ? walkRoute(l.from, l.to) : null));
+  const feats = [], rows = [], routes = [], bounds = new maplibregl.LngLatBounds();
+  for (const [li, l] of o.legs.entries()) {
+    if (l.mode === "walk") {
+      const w = walks[li], coords = w ? w.coords : [[l.from.lon, l.from.lat], [l.to.lon, l.to.lat]];
+      feats.push({ type: "Feature", properties: { kind: "walk" }, geometry: { type: "LineString", coordinates: coords } }); coords.forEach(c => bounds.extend(c));
+      const nm = l.to.name === "Destination" ? to.label : l.to.name, m = w ? w.meters : l.meters;
+      if (m > 40) {
+        const head = "🚶 " + (nm ? t("walkTo", { m, k: walkMin(m), n: esc(nm) }) : t("walkM", { m, k: walkMin(m) }));
+        if (w && w.steps.length) { routes.push(w); const id = regWalk(w); rows.push(`<div class="wleg" data-wl="${id}"><span>${head}</span><span>▾</span></div><div class="wsteps" data-wl="${id}">${stepsHtml(w)}</div>`); }
+        else rows.push(`<div class="step">${head}</div>`);
+      }
+    } else {
+      const path = l.path.map(s => [s.lon, s.lat]);
+      feats.push({ type: "Feature", properties: { kind: "bus", color: VCOLOR[l.vehicle] || VCOLOR.bus }, geometry: { type: "LineString", coordinates: path } }); path.forEach(c => bounds.extend(c));
+      rows.push(`<div class="step">` + (l.vehicle === "rail" ? "🚆" : l.vehicle === "tram" ? "🚊" : "🚌") + " " + t("take", { l: `<b>${esc(l.line)}</b>`, tm: hhmm(l.from.t), s: esc(l.from.name) }) + `<br><small>${t("stopsTo", { k: l.path.length - 1, n: esc(l.to.name), tm: hhmm(l.to.t) })}</small></div>`);
+    }
+  }
+  setSrc("route", { type: "FeatureCollection", features: feats });
+  map.fitBounds(bounds, { padding: { top: 90, bottom: 280, left: 40, right: 40 }, duration: 600 });
+  sheet(`<i data-detail></i><h3><span>${hhmm(o.depart)} → ${hhmm(o.arrive)}</span><button class="cb" id="back">${t("back")}</button></h3>` + rows.join(""));
+  $("#back").onclick = onBack;
+  wireSteps($("#sheet"));
+  $("#sheet").querySelectorAll(".wleg").forEach(h => h.onclick = () => {
+    const box = $("#sheet").querySelector(`.wsteps[data-wl="${h.dataset.wl}"]`), open = box.classList.toggle("open");
+    h.lastElementChild.textContent = open ? "▴" : "▾";
+    if (open) highlightStep(walkReg.get(+h.dataset.wl), 0, true);
+  });
+  navRoutes = routes;
+  if (routes[0]) { $("#sheet").querySelector(".wsteps")?.classList.add("open"); const h0 = $("#sheet").querySelector(".wleg"); if (h0) h0.lastElementChild.textContent = "▴"; highlightStep(routes[0], 0, false); }
+  updateNav();
+}
+
+async function resolveInput(input) {
+  if (input._chosen) return input._chosen;
+  const q = input.value.trim();
+  const it = input._itemsFor === q ? (input._items || []).find(x => x.kind !== "line") : null;
+  if (it) return toPlace(it);
+  return (await geocode(q))[0] || null;
+}
+function openPlanner(pre = {}) {
+  clearRoute();
+  sheet(`<h3>${t("planTitle")}</h3>
+    <input class="in" id="pf" placeholder="${esc(t("from"))}" autocomplete="off"><div class="sgi" id="pfb"></div>
+    <input class="in" id="pt" placeholder="${esc(t("to"))}" autocomplete="off"><div class="sgi" id="ptb"></div>
+    <button class="go" id="pgo">${t("find")}</button><div id="pmsg"></div>`);
+  const pf = $("#pf"), pt = $("#pt"), msg = m => $("#pmsg").innerHTML = `<small>${esc(m)}</small>`;
+  for (const [inp, bx] of [[pf, $("#pfb")], [pt, $("#ptb")]])
+    bindSuggest(inp, bx, { lines: false, stops: true, places: true, onPick: it => { const p = toPlace(it); inp.value = p.label; inp._chosen = p; } });
+  if (pre.from) { pf.value = pre.from.label; pf._chosen = pre.from; }
+  if (pre.to) { pt.value = pre.to.label; pt._chosen = pre.to; }
+  $("#pgo").onclick = async () => {
+    try {
+      if (!pt.value.trim()) return msg(t("enterDest"));
+      msg(t("findingPlaces"));
+      const from = pf.value.trim() ? await resolveInput(pf) : await whereAmI();
+      if (!from) return msg(t("noStart"));
+      const to = await resolveInput(pt);
+      if (!to) return msg(t("noDest"));
+      await runPlan(from, to);
+    } catch (e) { msg(e.message); }
+  };
+}
+async function directionsTo(place) {
+  sheet(`<small>${t("planning")}</small>`);
+  try { await runPlan(await whereAmI(), place); }
+  catch (e) { openPlanner({ to: place }); setTimeout(() => { const m = $("#pmsg"); if (m) m.innerHTML = `<small>${esc(e.message)}</small>`; }, 0); }
+}
+$("#plan").onclick = () => openPlanner();
+
+// ================= live location, heading, follow, rotation =================
+let meMarker, lastFix = null, watching = false, mode = 0, gpsHeading = null, compassHeading = null, compassOn = false, lastRot = 0, firstFix = true;
+const coneSvg = '<svg class="cone" viewBox="0 0 44 44"><defs><radialGradient id="cg" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#3b9eff" stop-opacity=".8"/><stop offset="1" stop-color="#3b9eff" stop-opacity="0"/></radialGradient></defs><path d="M22 22 L6 -4 A30 30 0 0 1 38 -4 Z" fill="url(#cg)"/></svg>';
+const curHeading = () => gpsHeading ?? compassHeading;
+
+function setMode(m) { mode = m; const b = $("#loc"); b.style.color = m ? "#3b9eff" : ""; b.textContent = m === 2 ? "🧭" : "◎"; }
+function applyHeading() {
+  const cone = meMarker?.getElement()?.querySelector(".cone"); if (!cone) return;
+  const h = curHeading();
+  if (h == null) { cone.style.display = "none"; return; }
+  cone.style.display = "block"; cone.style.transform = `rotate(${h - map.getBearing()}deg)`;
+}
+function onFix(p) {
+  const c = p.coords, ll = [c.longitude, c.latitude];
+  lastFix = { lat: c.latitude, lon: c.longitude, label: lang === "he" ? "המיקום שלי" : "My location" };
+  if (!meMarker) {
+    const el = document.createElement("div"); el.className = "meWrap"; el.innerHTML = coneSvg + '<div class="me"></div>';
+    meMarker = new maplibregl.Marker({ element: el }).setLngLat(ll).addTo(map);
+  } else meMarker.setLngLat(ll);
+  setSrc("acc", circlePoly(c.longitude, c.latitude, Math.max(c.accuracy || 0, 5)));
+  gpsHeading = (c.speed > 1 && c.heading != null && !isNaN(c.heading)) ? c.heading : null;
+  applyHeading();
+  if (firstFix) { firstFix = false; map.jumpTo({ center: ll, zoom: 16.5 }); }
+  else if (mode) map.easeTo({ center: ll, bearing: mode === 2 && curHeading() != null ? curHeading() : map.getBearing(), duration: 600 });
+  updateNav();
+}
+function startWatch() {
+  if (watching) return;
+  if (!navigator.geolocation) return status(t("noLoc"));
+  watching = true; status(t("locating"));
+  navigator.geolocation.watchPosition(onFix, () => { status(t("locDenied")); watching = false; setMode(0); }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+}
+function startCompass() {
+  if (compassOn) return; compassOn = true;
+  const onOri = e => {
+    let h = null;
+    if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;                                         // iOS
+    else if (e.absolute && e.alpha != null) h = (360 - e.alpha + (screen.orientation?.angle || 0)) % 360;   // Android
+    if (h == null) return;
+    compassHeading = h; applyHeading();
+    if (mode === 2 && gpsHeading == null && Date.now() - lastRot > 250 && angDiff(h, map.getBearing()) > 4) { lastRot = Date.now(); map.rotateTo(h, { duration: 200 }); }
+  };
+  const go = () => { window.addEventListener("deviceorientationabsolute", onOri, true); window.addEventListener("deviceorientation", onOri, true); };
+  if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission) DeviceOrientationEvent.requestPermission().then(r => r === "granted" && go()).catch(() => { });
+  else go();
+}
+function whereAmI() {
+  if (lastFix) return Promise.resolve(lastFix);
+  return new Promise((res, rej) => navigator.geolocation
+    ? navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lon: p.coords.longitude, label: lang === "he" ? "המיקום שלי" : "My location" }), () => rej(new Error(t("locDeniedStart"))), { timeout: 8000 })
+    : rej(new Error(t("locDeniedStart"))));
+}
+$("#loc").onclick = () => {
+  startCompass();
+  if (!watching) { startWatch(); setMode(1); return; }
+  if (mode === 0) { setMode(1); if (lastFix) map.easeTo({ center: [lastFix.lon, lastFix.lat], zoom: Math.max(map.getZoom(), 16.5), duration: 500 }); }
+  else if (mode === 1) { setMode(2); if (curHeading() != null) map.easeTo({ bearing: curHeading(), duration: 400 }); }
+  else { setMode(1); map.easeTo({ bearing: 0, duration: 400 }); }
+};
+map.on("dragstart", e => { if (e.originalEvent) setMode(0); });
+map.on("rotatestart", e => { if (e.originalEvent && mode === 2) setMode(1); });
+
+// ================= language toggle + boot =================
+$("#lang").onclick = () => {
+  lang = lang === "en" ? "he" : "en";
+  try { localStorage.setItem("lang", lang); } catch { }
+  applyLang(); closeSheet(); $("#sugg").style.display = "none"; $("#q").value = ""; pollBuses();
+};
+applyLang();
+startWatch(); setMode(1); startCompass();
+map.on("moveend", debounce(() => { if (!followLines) loadStops(); pollBuses(); }, 500));
+setInterval(() => { if (!document.hidden) pollBuses(); }, 10000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollBuses(); });
+</script>
+</body>
+</html>
