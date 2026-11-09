@@ -381,7 +381,7 @@ function applyLang() {
 // ================= helpers =================
 const status = m => $("#status").textContent = m;
 const dayStr = off => new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - off * 864e5).toISOString().slice(0, 10);
-const BUILD = "v11";
+const BUILD = "v12";
 let SCHEMA = null;
 const schemaReady = (async () => { try { const r = await fetch(API + "/openapi.json", { signal: AbortSignal.timeout(12000) }); SCHEMA = (await r.json()).paths || null; } catch { SCHEMA = null; } })();
 const paramsOf = path => (SCHEMA?.[path]?.get?.parameters || []).map(p => p.name);
@@ -415,14 +415,50 @@ async function apiDate(path, params) {
   if (lastErr && !lastRes.length) throw lastErr;
   return lastRes;
 }
+// The stops endpoint has no location filter, so the whole stop catalogue for the day is loaded once
+// (paged), kept in memory + IndexedDB, and every "stops in this box" query is answered locally.
+let allStops = null, allStopsP = null;
+const idb = {
+  open: () => new Promise((res, rej) => { try { const r = indexedDB.open("busmap", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } }),
+  async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
+  async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+};
+async function fetchAllStops(day) {
+  const dp = { ...dateParams("/gtfs_stops/list", day) };
+  let size = 5000, off = 0, out = [];
+  for (let guard = 0; guard < 60; guard++) {
+    let page;
+    try { page = await api("/gtfs_stops/list", { ...dp, limit: size, offset: off }); }
+    catch (e) { if (isBad(e) && size > 500) { size = Math.max(500, size >> 1); continue; } throw e; }
+    if (!Array.isArray(page)) throw new Error("stops: unexpected response");
+    for (const r of page) out.push({ id: r.id, code: r.code, name: r.name, lat: r.lat, lon: r.lon });
+    if (page.length < size) break;
+    off += page.length;
+    stopsInfo = `loading stops ${out.length}…`;
+  }
+  return out;
+}
+function loadAllStops() {
+  if (allStops) return Promise.resolve(allStops);
+  if (allStopsP) return allStopsP;
+  allStopsP = (async () => {
+    await schemaReady;
+    const day = dayStr(0), key = "stops:" + day;
+    try { const c = await idb.get(key); if (c && c.length) { allStops = c; return allStops; } } catch { }
+    let list = await fetchAllStops(day);
+    if (!list.length) { list = await fetchAllStops(dayStr(1)); if (list.length) dateMode.label = "yesterday"; }
+    list = dedupeStops(list);
+    if (!list.length) throw new Error("the stops list came back empty");
+    allStops = list;
+    try { await idb.set(key, list); } catch { }
+    return allStops;
+  })().finally(() => { allStopsP = null; });
+  return allStopsP;
+}
 async function stopsInBox(s, n, w, e, limit) {
-  await schemaReady;
-  const nm = SCHEMA ? bboxNames() : { latMin: "lat__greater_or_equal", latMax: "lat__lower_or_equal", lonMin: "lon__greater_or_equal", lonMax: "lon__lower_or_equal" };
-  if (!nm) throw new Error("no location filter for stops in the API (" + paramsOf("/gtfs_stops/list").join(",") + ")");
-  const base = { [nm.latMin]: s, [nm.latMax]: n, [nm.lonMin]: w, [nm.lonMax]: e };
-  const rows = dedupeStops(await apiDate("/gtfs_stops/list", { ...base, limit }).catch(x => { if (!isBad(x)) throw x; return apiDate("/gtfs_stops/list", { ...base, limit: Math.min(limit, 100) }); }));
-  const inside = rows.filter(r => r.lat >= s && r.lat <= n && r.lon >= w && r.lon <= e);
-  if (rows.length && !inside.length) throw new Error("server ignored the stop location filter (" + Object.values(nm).join(",") + ")");
+  const all = await loadAllStops();
+  const inside = [];
+  for (const r of all) if (r.lat >= s && r.lat <= n && r.lon >= w && r.lon <= e) { inside.push(r); if (inside.length >= limit) break; }
   return inside;
 }
 const dedupeStops = ss => { const seen = new Set(); return ss.filter(s => { const k = s.code ?? s.id; if (seen.has(k)) return false; seen.add(k); return true; }); };
@@ -559,14 +595,19 @@ async function ensureStopsAround() {   // fills the cache used by search suggest
 
 // ================= ride info (line name, destination, vehicle type) =================
 const rideInfoCache = new Map();
+function seedRideInfo(rows) {            // works on /gtfs_ride_stops rows (they carry gtfs_route__* fields)
+  for (const r of rows) {
+    const id = r.gtfs_ride_id ?? r.id;
+    if (id == null || rideInfoCache.has(id)) continue;
+    const long = r.gtfs_route__route_long_name || r.route_long_name || "";
+    rideInfoCache.set(id, { name: r.gtfs_route__route_short_name || r.route_short_name || "?", dest: long.split("<->").pop().replace(/#.*$/, "").replace(/-\d+$/, ""), mode: modeOf(r) });
+  }
+}
 async function rideInfo(ids) {
   const need = ids.filter(i => !rideInfoCache.has(i));
-  const chunks = []; for (let i = 0; i < need.length; i += 50) chunks.push(need.slice(i, i + 50));
-  const parts = await Promise.all(chunks.map(c => api("/gtfs_rides/list", { gtfs_ride_ids: c.join(","), limit: 100 }).catch(() => [])));
-  for (const r of parts.flat()) {
-    const long = r.gtfs_route__route_long_name || r.route_long_name || "";
-    rideInfoCache.set(r.id, { name: r.gtfs_route__route_short_name || r.route_short_name || "?", dest: long.split("<->").pop().replace(/#.*$/, "").replace(/-\d+$/, ""), mode: modeOf(r) });
-  }
+  const chunks = []; for (let i = 0; i < need.length; i += 10) chunks.push(need.slice(i, i + 10));
+  const parts = await Promise.all(chunks.map(c => api("/gtfs_ride_stops/list", { gtfs_ride_ids: c.join(","), limit: 1000 }).catch(() => [])));
+  seedRideInfo(parts.flat());
   const out = new Map();
   for (const i of ids) out.set(i, rideInfoCache.get(i) || { name: "?", dest: "", mode: "bus" });
   return out;
@@ -886,6 +927,7 @@ async function showStop(s) {
     if (!rs.length) { rs = await q(14); later = true; }      // nothing soon (e.g. night): show the first buses after that
     if (my !== sheetTok) return;
     if (!rs.length) { $("#sb").innerHTML = `<small>${t("noDep")}</small>`; return; }
+    seedRideInfo(rs);
     const info = await rideInfo([...new Set(rs.map(r => r.gtfs_ride_id))]);
     if (my !== sheetTok) return;
     const groups = new Map();
@@ -930,6 +972,7 @@ async function rideStops(ids) {
   for (let i = 0; i < need.length; i += 10) chunks.push(need.slice(i, i + 10));
   const parts = await Promise.all(chunks.map(c => apiv("rideStops", "/gtfs_ride_stops/list", [
     { gtfs_ride_ids: c.join(","), limit: 3000 }, { gtfs_ride_ids: c.join(","), limit: 1000 }, { gtfs_ride_ids: c.join(","), limit: 3000, date_from: d, date_to: d }])));
+  seedRideInfo(parts.flat());
   const tmp = new Map();
   for (const row of parts.flat()) {
     if (row.gtfs_stop__lat == null) throw new Error("Unexpected API shape — ride-stop fields: " + Object.keys(row).join(","));
@@ -1139,9 +1182,9 @@ async function openDiag() {
   const head = [`BusMap ${BUILD} · ${now.toISOString()}`, `view ${c.lat.toFixed(4)},${c.lng.toFixed(4)} zoom ${map.getZoom().toFixed(1)}`, lastFix ? `you ${lastFix.lat.toFixed(4)},${lastFix.lon.toFixed(4)}` : "no GPS fix yet", `date used: ${dateMode.label} (today ${dayStr(0)})`, `status: ${$("#status").textContent}`];
   const my = sheet(`<i data-detail></i><h3><span>🩺 Diagnostics</span></h3><small>${t("loading")}</small>`);
   const [s0, s1, s2, v1, v2, w, a] = await Promise.all([
-    probe("stops · today", U("/gtfs_stops/list", { ...view, date: dayStr(0), limit: 5 })),
-    probe("stops · yesterday", U("/gtfs_stops/list", { ...view, date: dayStr(1), limit: 5 })),
-    probe("stops · no date", U("/gtfs_stops/list", { ...view, limit: 5 })),
+    probe("stops · today", U("/gtfs_stops/list", { ...dateParams("/gtfs_stops/list", dayStr(0)), limit: 5 })),
+    probe("stops · yesterday", U("/gtfs_stops/list", { ...dateParams("/gtfs_stops/list", dayStr(1)), limit: 5 })),
+    probe("stops · no date", U("/gtfs_stops/list", { limit: 5 })),
     probe("live buses · this view", U("/siri_vehicle_locations/list", { ...view, recorded_at_time_from: from, recorded_at_time_to: to, limit: 5 })),
     probe("live buses · anywhere", U("/siri_vehicle_locations/list", { recorded_at_time_from: from, recorded_at_time_to: to, limit: 5 })),
     probe("walking router", `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${c.lng},${c.lat};${c.lng + 0.002},${c.lat + 0.001}?overview=false&steps=true&geometries=geojson`),
@@ -1160,8 +1203,10 @@ async function openDiag() {
   const ride = tt[0]?.j?.[0]?.gtfs_ride_id;
   const verdict = (p, good) => { p.label += good ? "  ✔ filter works" : "  ✘ FILTER IGNORED / EMPTY"; p.ok = p.ok && good; return p; };
   if (ride != null) {
-    const [r1, r2] = await Promise.all([probe("rides · by id", U("/gtfs_rides/list", { gtfs_ride_ids: ride, limit: 5 })), probe("ride stops · by ride id", U("/gtfs_ride_stops/list", { gtfs_ride_ids: ride, limit: 200 }))]);
-    extra.push(verdict(r1, r1.ok && r1.j?.length && r1.j.every(x => x.id === ride)), verdict(r2, r2.ok && r2.j?.length && r2.j.every(x => x.gtfs_ride_id === ride)));
+    const r2 = await probe("ride stops · by ride id", U("/gtfs_ride_stops/list", { gtfs_ride_ids: ride, limit: 200 }));
+    extra.push(verdict(r2, r2.ok && r2.j?.length && r2.j.every(x => x.gtfs_ride_id === ride)));
+    const ri = await rideInfo([ride]).then(m => m.get(ride)).catch(() => null);
+    extra.push({ ok: !!ri && ri.name !== "?", label: "ride info (app logic)", status: "-", ms: 0, rows: ri ? 1 : 0, sample: JSON.stringify(ri) });
   }
   const r3 = await probe("routes · line number 1", U("/gtfs_routes/list", { route_short_name: "1", ...dateParams("/gtfs_routes/list", dayStr(0)), limit: 5 }));
   extra.push(verdict(r3, r3.ok && r3.j?.length && r3.j.every(x => String(x.route_short_name) === "1")));
@@ -1169,7 +1214,7 @@ async function openDiag() {
   nw.label += nw.j?.[0] ? ` → newest ping ${Math.round((now - Date.parse(nw.j[0].recorded_at_time)) / 1000)}s old` : " → none";
   extra.push(nw);
   const t1 = performance.now(); let sv;
-  try { const ss = await stopsInBox(b.getSouth(), b.getNorth(), b.getWest(), b.getEast(), 300); sv = { ok: ss.length > 0, label: "stops in view (app logic)", status: "-", ms: Math.round(performance.now() - t1), rows: ss.length, sample: ss[0] ? JSON.stringify(ss[0]).slice(0, 160) : "none inside the view" }; }
+  try { const ss = await stopsInBox(b.getSouth(), b.getNorth(), b.getWest(), b.getEast(), 300); sv = { ok: ss.length > 0, label: "stops in view (app logic) · catalogue " + (allStops?.length ?? 0), status: "-", ms: Math.round(performance.now() - t1), rows: ss.length, sample: ss[0] ? JSON.stringify(ss[0]).slice(0, 160) : "none inside the view" }; }
   catch (e) { sv = { ok: false, label: "stops in view (app logic)", status: "ERR", ms: Math.round(performance.now() - t1), rows: 0, sample: e.message }; }
   extra.unshift(sv);
   const ep = ["/gtfs_stops/list", "/gtfs_routes/list", "/gtfs_rides/list", "/gtfs_ride_stops/list", "/siri_vehicle_locations/list"];
