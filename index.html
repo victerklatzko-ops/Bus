@@ -49,6 +49,13 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font:15px system-ui,s
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:5px}
 .chip{background:#ffffff1a;border-radius:8px;padding:2px 8px;font-size:13px}
 .step{padding:7px 0;border-top:1px solid #ffffff14;font-size:14px}
+.wstep{display:flex;gap:10px;align-items:center;padding:10px 8px;border-top:1px solid #ffffff14;font-size:14px;cursor:pointer;border-inline-start:4px solid transparent}
+.wstep .ic{font-size:20px;width:26px;text-align:center;flex:none}
+.wstep small{margin-inline-start:auto;color:var(--mut);white-space:nowrap;padding-inline-start:8px}
+.wstep.on{background:#ff8a0030;border-inline-start-color:#ff8a00;font-weight:600}
+.wleg{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid #ffffff14;font-size:14px;cursor:pointer}
+.wsteps{display:none;margin:0 0 6px;background:#0f141966;border-radius:10px}
+.wsteps.open{display:block}
 .maplibregl-ctrl-attrib{font-size:10px}
 </style>
 </head>
@@ -327,7 +334,7 @@ const T = {
     noBusesStart: "Nothing leaves near the start in the next 45 minutes", noRoute: "No route found",
     noRouteSub: "Nothing reachable with at most one transfer in the next couple of hours. Try a closer destination.",
     direct: "direct", transfer: "1 transfer", walkM: "Walk {m} m ({k} min)", walkTo: "Walk {m} m ({k} min) to {n}",
-    walkHere: "🚶 Walk here", walkOpt: "Walk", walkSummary: "{k} min · {m} m", approx: "Approximate straight-line route — the walking router is unavailable.",
+    tapPin: "Dropped pin", findingAddr: "Finding address…", walkHere: "🚶 Walk here", walkOpt: "Walk", walkSummary: "{k} min · {m} m", approx: "Approximate straight-line route — the walking router is unavailable.",
     transitFail: "Bus/train lookup failed: {e}", wDepart: "Head out on {n}", wDepartNoName: "Start walking", wArrive: "You've arrived",
     wLeft: "Turn left", wRight: "Turn right", wSlightLeft: "Bear left", wSlightRight: "Bear right", wSharpLeft: "Sharp left", wSharpRight: "Sharp right",
     wStraight: "Continue straight", wUturn: "Make a U-turn", wRound: "Take the roundabout", wOnto: "{a} onto {n}", wCont: "Continue on {n}",
@@ -350,7 +357,7 @@ const T = {
     noBusesStart: "שום דבר לא יוצא ליד ההתחלה ב-45 הדקות הקרובות", noRoute: "לא נמצא מסלול",
     noRouteSub: "אין מסלול עם החלפה אחת לכל היותר בשעות הקרובות. נסו יעד קרוב יותר.",
     direct: "ישיר", transfer: "החלפה אחת", walkM: "הליכה {m} מ׳ ({k} דק׳)", walkTo: "הליכה {m} מ׳ ({k} דק׳) אל {n}",
-    walkHere: "🚶 הליכה לכאן", walkOpt: "הליכה", walkSummary: "{k} דק׳ · {m} מ׳", approx: "מסלול משוער בקו ישר — שירות ההליכה אינו זמין.",
+    tapPin: "סיכה שהוצבה", findingAddr: "מחפש כתובת…", walkHere: "🚶 הליכה לכאן", walkOpt: "הליכה", walkSummary: "{k} דק׳ · {m} מ׳", approx: "מסלול משוער בקו ישר — שירות ההליכה אינו זמין.",
     transitFail: "חיפוש אוטובוסים/רכבות נכשל: {e}", wDepart: "צאו ל{n}", wDepartNoName: "התחילו ללכת", wArrive: "הגעתם",
     wLeft: "פנו שמאלה", wRight: "פנו ימינה", wSlightLeft: "סטו שמאלה", wSlightRight: "סטו ימינה", wSharpLeft: "פנייה חדה שמאלה", wSharpRight: "פנייה חדה ימינה",
     wStraight: "המשיכו ישר", wUturn: "פנו פניית פרסה", wRound: "היכנסו לכיכר", wOnto: "{a} אל {n}", wCont: "המשיכו ב{n}",
@@ -435,8 +442,13 @@ map.on("load", () => {
   map.addSource("acc", { type: "geojson", data: EMPTY });
   map.addLayer({ id: "acc", type: "fill", source: "acc", paint: { "fill-color": "#3b9eff", "fill-opacity": 0.12 } });
   map.addSource("route", { type: "geojson", data: EMPTY });
-  map.addLayer({ id: "route-walk", type: "line", source: "route", filter: ["==", ["get", "kind"], "walk"], paint: { "line-color": "#9fb0c3", "line-width": 4, "line-dasharray": [1, 2] } });
+  map.addLayer({ id: "route-walk-casing", type: "line", source: "route", filter: ["==", ["get", "kind"], "walk"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": 10 } });
+  map.addLayer({ id: "route-walk", type: "line", source: "route", filter: ["==", ["get", "kind"], "walk"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#3b9eff", "line-width": 6 } });
   map.addLayer({ id: "route-bus", type: "line", source: "route", filter: ["==", ["get", "kind"], "bus"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "color"], "line-width": 6 } });
+  map.addSource("walkhl", { type: "geojson", data: EMPTY });
+  map.addLayer({ id: "walkhl-casing", type: "line", source: "walkhl", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ffffff", "line-width": 15 } });
+  map.addLayer({ id: "walkhl", type: "line", source: "walkhl", filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ff8a00", "line-width": 9 } });
+  map.addLayer({ id: "walkhl-pt", type: "circle", source: "walkhl", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 9, "circle-color": "#ff8a00", "circle-stroke-color": "#ffffff", "circle-stroke-width": 3 } });
   map.addSource("stops", { type: "geojson", data: EMPTY });
   map.addLayer({ id: "stops", type: "circle", source: "stops", paint: { "circle-radius": 7, "circle-color": "#ffffff", "circle-stroke-color": "#3b9eff", "circle-stroke-width": 3 } });
   map.on("click", "stops", e => {
@@ -448,8 +460,10 @@ map.on("load", () => {
 });
 map.on("click", e => {
   $("#sugg").style.display = "none"; document.activeElement?.blur?.();
+  if (e.originalEvent?.target?.closest?.(".busMk, .meWrap, .pin")) return;                 // tapped a bus / you / a pin
   if (map.getLayer("stops") && map.queryRenderedFeatures(e.point, { layers: ["stops"] }).length) return;
-  closeSheet();
+  if ($("#sheet.open [data-detail]")) { closeSheet(); return; }                            // a route is open: first tap just closes its panel
+  dropPin(e.lngLat.lat, e.lngLat.lng);
 });
 map.on("rotate", () => {
   const b = map.getBearing();
@@ -637,7 +651,7 @@ function bindSuggest(input, box, opt) {
 }
 
 let pins = [];
-function clearRoute() { setSrc("route", EMPTY); pins.forEach(p => p.remove()); pins = []; }
+function clearRoute() { setSrc("route", EMPTY); clearHighlight(); navRoutes = []; pins.forEach(p => p.remove()); pins = []; }
 function addPin(p, color) {
   const el = document.createElement("div"); el.className = "pin"; el.style.background = color;
   pins.push(new maplibregl.Marker({ element: el }).setLngLat([p.lon, p.lat]).addTo(map));
@@ -668,7 +682,7 @@ async function walkRoute(a, b) {
     const rt = (await r.json()).routes?.[0];
     if (!rt) throw new Error("no route");
     res = { coords: rt.geometry.coordinates, meters: Math.round(rt.distance), approx: false,
-      steps: (rt.legs[0]?.steps || []).map(s => ({ m: s.maneuver || {}, name: s.name || "", d: Math.round(s.distance) })) };
+      steps: (rt.legs[0]?.steps || []).map(s => ({ m: s.maneuver || {}, name: s.name || "", d: Math.round(s.distance), coords: s.geometry?.coordinates || [], loc: s.maneuver?.location })) };
   } catch {
     res = { coords: [[a.lon, a.lat], [b.lon, b.lat]], meters: Math.round(Planner.dist(a, b) * 1.3), steps: [], approx: true };
   }
@@ -688,12 +702,96 @@ function drawWalk(route) {
   const b = new maplibregl.LngLatBounds(); route.coords.forEach(c => b.extend(c));
   map.fitBounds(b, { padding: { top: 90, bottom: 300, left: 40, right: 40 }, maxZoom: 18, duration: 600 });
 }
+// ---------- turn-by-turn: highlighted route on the map + the current step lit up ----------
+const walkReg = new Map(); let walkRegN = 0;
+const regWalk = r => { if (!r._id) { r._id = ++walkRegN; walkReg.set(r._id, r); } return r._id; };
+function stepIcon(s) {
+  const ty = s.m.type, mo = s.m.modifier;
+  if (ty === "depart") return "🚶";
+  if (ty === "arrive") return "📍";
+  if (/roundabout|rotary/.test(ty)) return "⟳";
+  return { left: "↰", right: "↱", "slight left": "↖", "slight right": "↗", "sharp left": "↰", "sharp right": "↱", straight: "↑", uturn: "↶" }[mo] || "↑";
+}
+function stepsHtml(route) {
+  const id = regWalk(route);
+  return route.steps.map((s, i) => `<div class="wstep" data-wr="${id}" data-si="${i}"><span class="ic">${stepIcon(s)}</span><span>${esc(stepText(s))}</span>${s.d ? `<small>${s.d} m</small>` : ""}</div>`).join("");
+}
+let hl = { id: 0, i: -1 }, navRoutes = [];
+function clearHighlight() { hl = { id: 0, i: -1 }; setSrc("walkhl", EMPTY); }
+function highlightStep(route, i, fly) {
+  const s = route?.steps?.[i]; if (!s) return;
+  const id = regWalk(route); hl = { id, i };
+  const pts = s.coords?.length ? s.coords : (s.loc ? [s.loc] : []), feats = [];
+  if (pts.length > 1) feats.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: pts } });
+  if (pts.length) feats.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: pts[0] } });
+  setSrc("walkhl", { type: "FeatureCollection", features: feats });
+  document.querySelectorAll(".wstep.on").forEach(el => el.classList.remove("on"));
+  const el = document.querySelector(`.wstep[data-wr="${id}"][data-si="${i}"]`);
+  if (el) { el.classList.add("on"); el.scrollIntoView?.({ block: "nearest", behavior: "smooth" }); }
+  if (fly && pts.length) { const b = new maplibregl.LngLatBounds(); pts.forEach(c => b.extend(c)); map.fitBounds(b, { padding: { top: 100, bottom: 320, left: 60, right: 60 }, maxZoom: 18.5, duration: 450 }); }
+}
+function wireSteps(root) { root.querySelectorAll(".wstep").forEach(el => el.onclick = () => highlightStep(walkReg.get(+el.dataset.wr), +el.dataset.si, true)); }
+function segDist(p, a, b) {   // metres from point p to segment a-b, all [lon, lat]
+  const k = Math.cos(p[1] * Math.PI / 180), ax = (a[0] - p[0]) * k, ay = a[1] - p[1], bx = (b[0] - p[0]) * k, by = b[1] - p[1];
+  const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  const u = L ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L)) : 0;
+  return Math.hypot(ax + u * dx, ay + u * dy) * 111320;
+}
+function updateNav() {        // while walking, light up the step you're on (within 50 m of the route)
+  if (!lastFix || !navRoutes.length) return;
+  const p = [lastFix.lon, lastFix.lat]; let best = null;
+  for (const r of navRoutes) r.steps.forEach((s, i) => {
+    const c = s.coords || []; if (c.length < 2) return;
+    let d = Infinity; for (let j = 1; j < c.length; j++) d = Math.min(d, segDist(p, c[j - 1], c[j]));
+    if (!best || d < best.d) best = { r, i, d };
+  });
+  if (best && best.d <= 50 && (best.r._id !== hl.id || best.i !== hl.i)) highlightStep(best.r, best.i, false);
+}
 function showWalk(from, to, route, onBack) {
   clearRoute(); addPin(from, "#3b9eff"); addPin(to, "#ff4d4d"); drawWalk(route);
-  const steps = route.steps.filter(s => s.m.type !== "arrive" || true).map(s => `<div class="step">${esc(stepText(s))}${s.d ? ` <small>· ${s.d} m</small>` : ""}</div>`).join("");
-  sheet(`<h3><span>🚶 ${t("walkSummary", { k: walkMin(route.meters), m: route.meters })}</span>${onBack ? `<button class="cb" id="back">${t("back")}</button>` : ""}</h3>
-    <small>${esc(from.label)} → ${esc(to.label)}</small>${route.approx ? `<small class="note">${t("approx")}</small>` : ""}${steps}`);
+  navRoutes = [route];
+  sheet(`<i data-detail></i><h3><span>🚶 ${t("walkSummary", { k: walkMin(route.meters), m: route.meters })}</span>${onBack ? `<button class="cb" id="back">${t("back")}</button>` : ""}</h3>
+    <small>${esc(from.label)} → ${esc(to.label)}</small>${route.approx ? `<small class="note">${t("approx")}</small>` : ""}${stepsHtml(route)}`);
+  wireSteps($("#sheet"));
   if (onBack) $("#back").onclick = onBack;
+  if (route.steps.length) highlightStep(route, 0, false);
+  updateNav();
+}
+
+// ---------- tap anywhere on the map: address + route options ----------
+const revCache = new Map();
+async function reverseGeocode(lat, lon) {
+  const key = lang + lat.toFixed(5) + lon.toFixed(5);
+  if (revCache.has(key)) return revCache.get(key);
+  const u = new URL("https://nominatim.openstreetmap.org/reverse");
+  u.search = new URLSearchParams({ format: "jsonv2", lat, lon, zoom: 18, addressdetails: 1, "accept-language": lang === "he" ? "he,en" : "en,he" });
+  const r = await fetch(u); if (!r.ok) throw new Error("geocoder " + r.status);
+  const j = await r.json(); if (j.error) throw new Error(j.error);
+  const a = j.address || {};
+  const road = a.road || a.pedestrian || a.footway || a.path || a.neighbourhood || "";
+  const street = road ? road + (a.house_number ? " " + a.house_number : "") : "";
+  const city = a.city || a.town || a.village || a.suburb || "";
+  const poi = j.name && j.name !== road ? j.name : "";
+  const title = poi || street || String(j.display_name || "").split(",")[0] || "";
+  const res = { title, sub: [poi ? street : "", city].filter(Boolean).join(", "), label: [title, city].filter(Boolean).join(", ") };
+  revCache.set(key, res); return res;
+}
+async function dropPin(lat, lon) {
+  clearRoute();
+  const p = { lat, lon, label: t("tapPin") };
+  addPin(p, "#ff4d4d");
+  map.easeTo({ center: [lon, lat], offset: [0, -140], duration: 300 });   // keep the pin above the sheet
+  const my = sheet(`<h3><span id="pt">📍 ${esc(p.label)}</span><button class="cb" id="xp">✕</button></h3><small id="ps">${t("findingAddr")}</small>${placeActions(p)}`);
+  wireActions(p);
+  $("#xp").onclick = () => { clearRoute(); closeSheet(); };
+  try {
+    const r = await reverseGeocode(lat, lon);
+    p.label = r.label || (lat.toFixed(5) + ", " + lon.toFixed(5));
+    if (my === sheetTok) { $("#pt").textContent = "📍 " + (r.title || p.label); $("#ps").textContent = r.sub; }
+  } catch {
+    p.label = lat.toFixed(5) + ", " + lon.toFixed(5);
+    if (my === sheetTok) { $("#pt").textContent = "📍 " + p.label; $("#ps").textContent = ""; }
+  }
 }
 async function walkToPlace(place) {
   sheet(`<small>${t("planning")}</small>`);
@@ -831,23 +929,36 @@ async function showOption(o, from, to, onBack) {
   sheet(`<small>${t("loading")}</small>`);
   // street-accurate walking for each walking leg (cached, in parallel)
   const walks = await Promise.all(o.legs.map(l => l.mode === "walk" && l.meters > 40 ? walkRoute(l.from, l.to) : null));
-  const feats = [], steps = [], bounds = new maplibregl.LngLatBounds();
+  const feats = [], rows = [], routes = [], bounds = new maplibregl.LngLatBounds();
   for (const [li, l] of o.legs.entries()) {
     if (l.mode === "walk") {
       const w = walks[li], coords = w ? w.coords : [[l.from.lon, l.from.lat], [l.to.lon, l.to.lat]];
       feats.push({ type: "Feature", properties: { kind: "walk" }, geometry: { type: "LineString", coordinates: coords } }); coords.forEach(c => bounds.extend(c));
       const nm = l.to.name === "Destination" ? to.label : l.to.name, m = w ? w.meters : l.meters;
-      if (m > 40) steps.push("🚶 " + (nm ? t("walkTo", { m, k: walkMin(m), n: esc(nm) }) : t("walkM", { m, k: walkMin(m) })));
+      if (m > 40) {
+        const head = "🚶 " + (nm ? t("walkTo", { m, k: walkMin(m), n: esc(nm) }) : t("walkM", { m, k: walkMin(m) }));
+        if (w && w.steps.length) { routes.push(w); const id = regWalk(w); rows.push(`<div class="wleg" data-wl="${id}"><span>${head}</span><span>▾</span></div><div class="wsteps" data-wl="${id}">${stepsHtml(w)}</div>`); }
+        else rows.push(`<div class="step">${head}</div>`);
+      }
     } else {
       const path = l.path.map(s => [s.lon, s.lat]);
       feats.push({ type: "Feature", properties: { kind: "bus", color: VCOLOR[l.vehicle] || VCOLOR.bus }, geometry: { type: "LineString", coordinates: path } }); path.forEach(c => bounds.extend(c));
-      steps.push((l.vehicle === "rail" ? "🚆" : l.vehicle === "tram" ? "🚊" : "🚌") + " " + t("take", { l: `<b>${esc(l.line)}</b>`, tm: hhmm(l.from.t), s: esc(l.from.name) }) + `<br><small>${t("stopsTo", { k: l.path.length - 1, n: esc(l.to.name), tm: hhmm(l.to.t) })}</small>`);
+      rows.push(`<div class="step">` + (l.vehicle === "rail" ? "🚆" : l.vehicle === "tram" ? "🚊" : "🚌") + " " + t("take", { l: `<b>${esc(l.line)}</b>`, tm: hhmm(l.from.t), s: esc(l.from.name) }) + `<br><small>${t("stopsTo", { k: l.path.length - 1, n: esc(l.to.name), tm: hhmm(l.to.t) })}</small></div>`);
     }
   }
   setSrc("route", { type: "FeatureCollection", features: feats });
   map.fitBounds(bounds, { padding: { top: 90, bottom: 280, left: 40, right: 40 }, duration: 600 });
-  sheet(`<h3><span>${hhmm(o.depart)} → ${hhmm(o.arrive)}</span><button class="cb" id="back">${t("back")}</button></h3>` + steps.map(s => `<div class="step">${s}</div>`).join(""));
+  sheet(`<i data-detail></i><h3><span>${hhmm(o.depart)} → ${hhmm(o.arrive)}</span><button class="cb" id="back">${t("back")}</button></h3>` + rows.join(""));
   $("#back").onclick = onBack;
+  wireSteps($("#sheet"));
+  $("#sheet").querySelectorAll(".wleg").forEach(h => h.onclick = () => {
+    const box = $("#sheet").querySelector(`.wsteps[data-wl="${h.dataset.wl}"]`), open = box.classList.toggle("open");
+    h.lastElementChild.textContent = open ? "▴" : "▾";
+    if (open) highlightStep(walkReg.get(+h.dataset.wl), 0, true);
+  });
+  navRoutes = routes;
+  if (routes[0]) { $("#sheet").querySelector(".wsteps")?.classList.add("open"); const h0 = $("#sheet").querySelector(".wleg"); if (h0) h0.lastElementChild.textContent = "▴"; highlightStep(routes[0], 0, false); }
+  updateNav();
 }
 
 async function resolveInput(input) {
@@ -911,6 +1022,7 @@ function onFix(p) {
   applyHeading();
   if (firstFix) { firstFix = false; map.jumpTo({ center: ll, zoom: 16.5 }); }
   else if (mode) map.easeTo({ center: ll, bearing: mode === 2 && curHeading() != null ? curHeading() : map.getBearing(), duration: 600 });
+  updateNav();
 }
 function startWatch() {
   if (watching) return;
