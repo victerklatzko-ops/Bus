@@ -381,16 +381,31 @@ function applyLang() {
 // ================= helpers =================
 const status = m => $("#status").textContent = m;
 const dayStr = off => new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - off * 864e5).toISOString().slice(0, 10);
-const BUILD = "v10";
+const BUILD = "v11";
+let SCHEMA = null;
+const schemaReady = (async () => { try { const r = await fetch(API + "/openapi.json", { signal: AbortSignal.timeout(12000) }); SCHEMA = (await r.json()).paths || null; } catch { SCHEMA = null; } })();
+const paramsOf = path => (SCHEMA?.[path]?.get?.parameters || []).map(p => p.name);
+function dateParams(path, d) {           // the date filter has different names on different endpoints
+  const n = paramsOf(path);
+  if (!n.length || n.includes("date")) return { date: d };
+  const o = {}; if (n.includes("date_from")) o.date_from = d; if (n.includes("date_to")) o.date_to = d; return o;
+}
+function bboxNames() {
+  const n = paramsOf("/gtfs_stops/list");
+  const pick = (axis, hi) => n.find(x => x.toLowerCase().includes(axis) && (hi ? /(lower|lte|le$|max|to$)/i : /(greater|gte|ge$|min|from)/i).test(x));
+  const o = { latMin: pick("lat", false), latMax: pick("lat", true), lonMin: pick("lon", false), lonMax: pick("lon", true) };
+  return o.latMin && o.latMax && o.lonMin && o.lonMax ? o : null;
+}
 const dateMode = { i: 0, label: "today" };
 const isBad = e => / (400|422)(:|$)/.test(e.message);
 // GTFS lookups are per-date. If the server has nothing for today (e.g. just after midnight), fall back to yesterday, then to any date.
 async function apiDate(path, params) {
+  await schemaReady;
   const forms = [0, 1, "none"], order = [dateMode.i, 0, 1, 2].filter((v, i, a) => a.indexOf(v) === i);
   let lastErr = null, lastRes = [];
   for (const i of order) {
     const f = forms[i], p = { ...params };
-    if (f === "none") delete p.date; else p.date = dayStr(f);
+    delete p.date; if (f !== "none") Object.assign(p, dateParams(path, dayStr(f)));
     try {
       const r = await api(path, p);
       if (!Array.isArray(r) || r.length) { dateMode.i = i; dateMode.label = f === 0 ? "today" : f === 1 ? "yesterday" : "any date"; return r; }
@@ -399,6 +414,16 @@ async function apiDate(path, params) {
   }
   if (lastErr && !lastRes.length) throw lastErr;
   return lastRes;
+}
+async function stopsInBox(s, n, w, e, limit) {
+  await schemaReady;
+  const nm = SCHEMA ? bboxNames() : { latMin: "lat__greater_or_equal", latMax: "lat__lower_or_equal", lonMin: "lon__greater_or_equal", lonMax: "lon__lower_or_equal" };
+  if (!nm) throw new Error("no location filter for stops in the API (" + paramsOf("/gtfs_stops/list").join(",") + ")");
+  const base = { [nm.latMin]: s, [nm.latMax]: n, [nm.lonMin]: w, [nm.lonMax]: e };
+  const rows = dedupeStops(await apiDate("/gtfs_stops/list", { ...base, limit }).catch(x => { if (!isBad(x)) throw x; return apiDate("/gtfs_stops/list", { ...base, limit: Math.min(limit, 100) }); }));
+  const inside = rows.filter(r => r.lat >= s && r.lat <= n && r.lon >= w && r.lon <= e);
+  if (rows.length && !inside.length) throw new Error("server ignored the stop location filter (" + Object.values(nm).join(",") + ")");
+  return inside;
 }
 const dedupeStops = ss => { const seen = new Set(); return ss.filter(s => { const k = s.code ?? s.id; if (seen.has(k)) return false; seen.add(k); return true; }); };
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -514,9 +539,8 @@ async function loadStops() {
   if (!map.getSource("stops")) return;
   if (map.getZoom() < 14.5) { setSrc("stops", EMPTY); stopsInfo = "zoom in for stops"; return; }
   const b = map.getBounds();
-  const base = { lat__greater_or_equal: b.getSouth(), lat__lower_or_equal: b.getNorth(), lon__greater_or_equal: b.getWest(), lon__lower_or_equal: b.getEast() };
   try {
-    const ss = dedupeStops(await apiDate("/gtfs_stops/list", { ...base, limit: 300 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...base, limit: 100 }); }));
+    const ss = await stopsInBox(b.getSouth(), b.getNorth(), b.getWest(), b.getEast(), 300);
     stopsErr = ""; stopsInfo = `stops ${ss.length}${dateMode.label === "today" ? "" : " (" + dateMode.label + ")"}`;
     addStops(ss); setSrc("stops", stopsFC(ss));
   } catch (e) { stopsErr = t("stopsFail", { e: e.message }); status(stopsErr); }
@@ -528,8 +552,7 @@ async function ensureStopsAround() {   // fills the cache used by search suggest
   aroundDone.add(key);
   try {
     const d = 0.08;
-    { const bb = { lat__greater_or_equal: c.lat - d, lat__lower_or_equal: c.lat + d, lon__greater_or_equal: c.lng - d, lon__lower_or_equal: c.lng + d };
-      addStops(dedupeStops(await apiDate("/gtfs_stops/list", { ...bb, limit: 4000 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...bb, limit: 1000 }); }))); }
+    addStops(await stopsInBox(c.lat - d, c.lat + d, c.lng - d, c.lng + d, 4000));
     return true;
   } catch { aroundDone.delete(key); return false; }
 }
@@ -564,7 +587,7 @@ async function pollBuses() {
   pollBusy = true;
   try {
     const now = new Date();
-    const p = { recorded_at_time_from: iso(new Date(now - 4 * 60 * 1000)), recorded_at_time_to: iso(now), order_by: "recorded_at_time desc", limit: 400 };
+    const p = { recorded_at_time_from: iso(new Date(now - 10 * 60 * 1000)), recorded_at_time_to: iso(now), order_by: "recorded_at_time desc", limit: 1000 };
     if (followLines) p.siri_routes__line_refs = followLines.lineRefs.join(",");
     else {
       if (map.getZoom() < 14) { for (const m of busMarkers.values()) m.remove(); busMarkers.clear(); status(t("zoomIn")); return; }
@@ -887,9 +910,8 @@ async function showStop(s) {
 // ================= trip planner =================
 const rideStopCache = new Map();
 async function stopsNear(p, r = 1000) {
-  const d = r / 111320, d2 = today();
-  const base = { lat__greater_or_equal: p.lat - d, lat__lower_or_equal: p.lat + d, lon__greater_or_equal: p.lon - d * 1.2, lon__lower_or_equal: p.lon + d * 1.2 };
-  const ss = dedupeStops(await apiDate("/gtfs_stops/list", { ...base, limit: 300 }).catch(e => { if (!isBad(e)) throw e; return apiDate("/gtfs_stops/list", { ...base, limit: 100 }); }));
+  const d = r / 111320;
+  const ss = await stopsInBox(p.lat - d, p.lat + d, p.lon - d * 1.2, p.lon + d * 1.2, 300);
   return ss.sort((a, b) => Planner.dist(a, p) - Planner.dist(b, p)).slice(0, 120).map(s => s.id);   // nearest 120 keeps the URL short
 }
 async function ridesAtStops(stopIds, from, to, cap) {
@@ -1106,7 +1128,8 @@ async function probe(label, url) {
     const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch { }
     const rows = Array.isArray(j) ? j.length : j?.routes ? j.routes.length : j ? 1 : 0;
     const first = Array.isArray(j) ? j[0] : j?.routes ? { distance: j.routes[0]?.distance, hasSteps: !!j.routes[0]?.legs?.[0]?.steps?.length, stepGeometry: !!j.routes[0]?.legs?.[0]?.steps?.[0]?.geometry } : j;
-    return { ok: r.ok, label, status: r.status, ms: Math.round(performance.now() - t0), rows, j, sample: r.ok ? JSON.stringify(first ?? null).slice(0, 280) : txt.replace(/\s+/g, " ").slice(0, 220) };
+    const keys = first && typeof first === "object" && Array.isArray(j) ? Object.keys(first).join(",").slice(0, 600) : "";
+    return { ok: r.ok, label, status: r.status, ms: Math.round(performance.now() - t0), rows, j, keys, sample: r.ok ? JSON.stringify(first ?? null).slice(0, 280) : txt.replace(/\s+/g, " ").slice(0, 220) };
   } catch (e) { return { ok: false, label, status: "ERR", ms: Math.round(performance.now() - t0), rows: 0, j: null, sample: String(e.message || e) }; }
 }
 async function openDiag() {
@@ -1133,8 +1156,26 @@ async function openDiag() {
       probe("timetable · limit 1500 + sorted", U("/gtfs_ride_stops/list", { ...win, order_by: "arrival_time asc", limit: 1500 }))
     ]));
   } else tt.push({ ok: false, label: "timetable at stop", status: "-", ms: 0, rows: 0, sample: "skipped: no stop was returned above" });
-  const all = [s0, s1, s2, v1, v2, ...tt, w, a];
-  const text = head.join("\n") + "\n\n" + all.map(x => `${x.ok ? "OK  " : "FAIL"} ${x.label} — ${x.status} · ${x.ms}ms · ${x.rows} rows\n     ${x.sample}`).join("\n");
+  const extra = [];
+  const ride = tt[0]?.j?.[0]?.gtfs_ride_id;
+  const verdict = (p, good) => { p.label += good ? "  ✔ filter works" : "  ✘ FILTER IGNORED / EMPTY"; p.ok = p.ok && good; return p; };
+  if (ride != null) {
+    const [r1, r2] = await Promise.all([probe("rides · by id", U("/gtfs_rides/list", { gtfs_ride_ids: ride, limit: 5 })), probe("ride stops · by ride id", U("/gtfs_ride_stops/list", { gtfs_ride_ids: ride, limit: 200 }))]);
+    extra.push(verdict(r1, r1.ok && r1.j?.length && r1.j.every(x => x.id === ride)), verdict(r2, r2.ok && r2.j?.length && r2.j.every(x => x.gtfs_ride_id === ride)));
+  }
+  const r3 = await probe("routes · line number 1", U("/gtfs_routes/list", { route_short_name: "1", ...dateParams("/gtfs_routes/list", dayStr(0)), limit: 5 }));
+  extra.push(verdict(r3, r3.ok && r3.j?.length && r3.j.every(x => String(x.route_short_name) === "1")));
+  const nw = await probe("live · newest anywhere", U("/siri_vehicle_locations/list", { recorded_at_time_from: iso(new Date(now - 30 * 60e3)), recorded_at_time_to: iso(now), order_by: "recorded_at_time desc", limit: 3 }));
+  nw.label += nw.j?.[0] ? ` → newest ping ${Math.round((now - Date.parse(nw.j[0].recorded_at_time)) / 1000)}s old` : " → none";
+  extra.push(nw);
+  const t1 = performance.now(); let sv;
+  try { const ss = await stopsInBox(b.getSouth(), b.getNorth(), b.getWest(), b.getEast(), 300); sv = { ok: ss.length > 0, label: "stops in view (app logic)", status: "-", ms: Math.round(performance.now() - t1), rows: ss.length, sample: ss[0] ? JSON.stringify(ss[0]).slice(0, 160) : "none inside the view" }; }
+  catch (e) { sv = { ok: false, label: "stops in view (app logic)", status: "ERR", ms: Math.round(performance.now() - t1), rows: 0, sample: e.message }; }
+  extra.unshift(sv);
+  const ep = ["/gtfs_stops/list", "/gtfs_routes/list", "/gtfs_rides/list", "/gtfs_ride_stops/list", "/siri_vehicle_locations/list"];
+  const schemaTxt = SCHEMA ? ep.map(p => `${p}: ${paramsOf(p).filter(x => !/^(limit|offset|order_by|get_count)$/.test(x)).join(", ") || "(none)"}`).join("\n") : "openapi.json not readable from this page";
+  const all = [s0, s1, s2, v1, v2, ...tt, ...extra, w, a];
+  const text = head.join("\n") + "\n\n" + all.map(x => `${x.ok ? "OK  " : "FAIL"} ${x.label} — ${x.status} · ${x.ms}ms · ${x.rows} rows\n     ${x.sample}${x.keys ? "\n     keys: " + x.keys : ""}`).join("\n") + "\n\nAPI parameters (from openapi.json):\n" + schemaTxt;
   if (my !== sheetTok) return;
   sheet(`<i data-detail></i><h3><span>🩺 Diagnostics</span><button class="cb" id="dx">${lang === "he" ? "סגור" : "Close"}</button></h3>
     <div class="acts"><button class="cb main" id="dcp">${lang === "he" ? "העתק דוח" : "Copy report"}</button></div>
